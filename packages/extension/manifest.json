@@ -1,13 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Temu 产品采集",
+  "name": "Temu Product Collector",
   "version": "1.0.0",
-  "description": "一键采集 Temu 产品数据，配合铺货工具使用",
+  "description": "Collect Temu product data for batch listing tool",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["https://www.temu.com/*", "https://seller.temu.com/*"],
   "background": {
-    "service_worker": "src/background/service-worker.js",
-    "type": "module"
+    "service_worker": "src/background/service-worker.js"
   },
   "content_scripts": [
     {
@@ -18,7 +17,6 @@
   ],
   "action": {
     "default_popup": "src/popup/popup.html",
-    "default_title": "Temu 采集工具"
-  },
-  "icons": {}
+    "default_title": "Temu Collector"
+  }
 }

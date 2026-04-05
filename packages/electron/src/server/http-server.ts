@@ -32,4 +32,5 @@ export function startHttpServer(port: number): void {
   app.listen(port, '127.0.0.1', () => {
     console.log(`HTTP server listening on http://localhost:${port}`);
   });
+
 }

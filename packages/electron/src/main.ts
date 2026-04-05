@@ -63,6 +63,6 @@ app.whenReady().then(async () => {
 });
 
 // Prevent Electron from quitting when all windows are closed (tray mode)
-app.on('window-all-closed', (e: Event) => {
-  e.preventDefault();
+app.on('window-all-closed', () => {
+  // Do nothing - keep running in tray mode
 });

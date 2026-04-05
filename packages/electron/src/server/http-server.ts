@@ -7,7 +7,7 @@ import { pricingRouter } from './routes/pricing';
 import { listingRouter } from './routes/listing';
 import { settingsRouter } from './routes/settings';
 
-export function startHttpServer(port: number) {
+export function startHttpServer(port: number): void {
   const app = express();
 
   app.use(cors({ origin: '*' }));
@@ -32,6 +32,4 @@ export function startHttpServer(port: number) {
   app.listen(port, '127.0.0.1', () => {
     console.log(`HTTP server listening on http://localhost:${port}`);
   });
-
-  return app;
 }

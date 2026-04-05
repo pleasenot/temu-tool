@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { v4 as uuid } from 'uuid';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import { TemuListingAutomation } from '../../services/playwright-automation';
 import { broadcastToWeb } from '../ws-server';
 
-export const listingRouter = Router();
+export const listingRouter: RouterType = Router();
 
 let automation: TemuListingAutomation | null = null;
 

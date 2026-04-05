@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.temu.com/*"],
-      "js": ["src/content/temu-product.js"],
+      "js": ["src/content/scraper.js", "src/content/temu-product.js"],
       "run_at": "document_idle"
     }
   ],
@@ -20,9 +20,5 @@
     "default_popup": "src/popup/popup.html",
     "default_title": "Temu 采集工具"
   },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  }
+  "icons": {}
 }

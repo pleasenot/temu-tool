@@ -1,0 +1,17 @@
+{
+  "name": "temu-lister",
+  "version": "1.0.0",
+  "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "sharp", "esbuild"]
+  },
+  "scripts": {
+    "dev": "pnpm --parallel dev",
+    "dev:electron": "pnpm --filter electron dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm --filter shared build && pnpm --parallel --filter '!shared' build",
+    "build:shared": "pnpm --filter shared build",
+    "build:web": "pnpm --filter web build",
+    "build:electron": "pnpm --filter electron build"
+  }
+}

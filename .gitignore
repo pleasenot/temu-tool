@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+*.db
+*.db-journal
+.DS_Store
+thumbs.db
+
+# Build outputs
+packages/web/dist/
+packages/electron/dist/
+packages/extension/dist/
+
+# Electron
+release/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Credentials - NEVER commit
+.env.local
+credentials.json

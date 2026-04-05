@@ -1,0 +1,9 @@
+{
+  "name": "extension",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Load as unpacked extension in Chrome'",
+    "build": "echo 'Extension ready for loading'"
+  }
+}

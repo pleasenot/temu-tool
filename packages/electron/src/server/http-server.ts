@@ -21,7 +21,7 @@ export function startHttpServer(port: number) {
   app.use('/api/settings', settingsRouter);
 
   // Serve React SPA static files
-  const webDistPath = path.resolve(__dirname, '../../web/dist');
+  const webDistPath = path.resolve(__dirname, '../../../web/dist');
   app.use(express.static(webDistPath));
 
   // SPA fallback - serve index.html for all non-API routes

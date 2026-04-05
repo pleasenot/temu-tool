@@ -10,8 +10,14 @@ const WS_PORT = 23789;
 let tray: Tray | null = null;
 
 function createTray() {
-  // Use a simple 16x16 icon (will be replaced with a real icon later)
-  const icon = nativeImage.createEmpty();
+  // Create a minimal 16x16 tray icon
+  const icon = nativeImage.createFromBuffer(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAADklEQVQ4jWNgGAWDFQAAAhAAAbksmMoAAAAASUVORK5CYII=',
+      'base64'
+    ),
+    { width: 16, height: 16 }
+  );
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -40,7 +46,7 @@ function createTray() {
 
 app.whenReady().then(async () => {
   // Initialize database
-  initDatabase();
+  await initDatabase();
 
   // Start HTTP server (serves React SPA + REST API)
   startHttpServer(HTTP_PORT);

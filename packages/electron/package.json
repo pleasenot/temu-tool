@@ -4,7 +4,7 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "electron --require tsx/cjs src/main.ts",
     "build": "tsc",
     "start": "electron dist/main.js"
   },

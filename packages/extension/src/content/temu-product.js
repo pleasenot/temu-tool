@@ -4,12 +4,12 @@
  */
 
 function isProductPage() {
-  const url = window.location.href;
+  var url = window.location.href;
   return /temu\.com.*\/.*g-/.test(url) || document.querySelector('h1') !== null;
 }
 
 function createCollectButton() {
-  const btn = document.createElement('button');
+  var btn = document.createElement('button');
   btn.id = 'temu-lister-collect-btn';
   btn.textContent = '\u91c7\u96c6';
   btn.style.cssText = [

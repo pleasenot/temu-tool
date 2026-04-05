@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp", "esbuild"]
+    "onlyBuiltDependencies": ["sharp", "esbuild", "electron"]
   },
   "scripts": {
     "dev": "pnpm --parallel dev",

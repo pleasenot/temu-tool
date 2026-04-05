@@ -24,3 +24,4 @@ release/
 # Credentials - NEVER commit
 .env.local
 credentials.json
+*.tsbuildinfo

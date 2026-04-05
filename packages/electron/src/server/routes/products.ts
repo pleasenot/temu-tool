@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import type { ApiResponse, ProductListResponse, ProductDetailResponse } from '@temu-lister/shared';
 
-export const productsRouter = Router();
+export const productsRouter: RouterType = Router();
 
 // GET /api/products - List all products
 productsRouter.get('/', (req, res) => {

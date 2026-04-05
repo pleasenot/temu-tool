@@ -7,7 +7,7 @@ import { pricingRouter } from './routes/pricing';
 import { listingRouter } from './routes/listing';
 import { settingsRouter } from './routes/settings';
 
-export function startHttpServer(port: number) {
+export function startHttpServer(port: number): void {
   const app = express();
 
   app.use(cors({ origin: '*' }));
@@ -21,7 +21,7 @@ export function startHttpServer(port: number) {
   app.use('/api/settings', settingsRouter);
 
   // Serve React SPA static files
-  const webDistPath = path.resolve(__dirname, '../../web/dist');
+  const webDistPath = path.resolve(__dirname, '../../../web/dist');
   app.use(express.static(webDistPath));
 
   // SPA fallback - serve index.html for all non-API routes
@@ -33,5 +33,4 @@ export function startHttpServer(port: number) {
     console.log(`HTTP server listening on http://localhost:${port}`);
   });
 
-  return app;
 }

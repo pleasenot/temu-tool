@@ -1,9 +1,9 @@
-import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import initSqlJs, { type Database } from 'sql.js';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
-let db: SqlJsDatabase;
+let db: Database;
 let dbPath: string;
 
 export async function initDatabase() {
@@ -22,7 +22,7 @@ export async function initDatabase() {
   return db;
 }
 
-export function getDb(): SqlJsDatabase {
+export function getDb(): Database {
   if (!db) {
     throw new Error('Database not initialized. Call initDatabase() first.');
   }

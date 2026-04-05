@@ -65,23 +65,21 @@
 </head>
 <body>
   <div class="header">
-    <h1>Temu 铺货工具</h1>
-    <p>批量采集 · 套图 · 上品</p>
+    <h1 id="title"></h1>
+    <p id="subtitle"></p>
   </div>
 
   <div class="status">
     <div class="status-dot" id="statusDot"></div>
-    <span class="status-text" id="statusText">检查连接中...</span>
+    <span class="status-text" id="statusText"></span>
   </div>
 
   <div class="actions">
-    <button class="btn btn-primary" id="openDashboard">打开管理后台</button>
-    <button class="btn btn-secondary" id="collectCurrent">采集当前页面</button>
+    <button class="btn btn-primary" id="openDashboard"></button>
+    <button class="btn btn-secondary" id="collectCurrent"></button>
   </div>
 
-  <div class="info">
-    确保 Temu Lister 桌面应用已启动
-  </div>
+  <div class="info" id="infoText"></div>
 
   <script src="popup.js"></script>
 </body>

@@ -1,11 +1,11 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { v4 as uuid } from 'uuid';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import { PhotoshopClient } from '../../services/photoshop-client';
 import { broadcastToWeb } from '../ws-server';
 import type { ApiResponse, MockupTemplateListResponse } from '@temu-lister/shared';
 
-export const mockupRouter = Router();
+export const mockupRouter: RouterType = Router();
 
 // GET /api/mockup/templates - List mockup templates
 mockupRouter.get('/templates', (_req, res) => {

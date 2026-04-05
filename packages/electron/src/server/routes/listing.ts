@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
-import { getDb } from '../../services/database';
+import { dbAll, dbGet, dbRun } from '../../services/database';
 import { TemuListingAutomation } from '../../services/playwright-automation';
 import { broadcastToWeb } from '../ws-server';
 
@@ -10,9 +10,8 @@ let automation: TemuListingAutomation | null = null;
 
 // POST /api/listing/login - Test Temu login
 listingRouter.post('/login', async (_req, res) => {
-  const db = getDb();
-  const username = (db.prepare("SELECT value FROM settings WHERE key = 'temu_username'").get() as any)?.value;
-  const password = (db.prepare("SELECT value FROM settings WHERE key = 'temu_password'").get() as any)?.value;
+  const username = dbGet("SELECT value FROM settings WHERE key = 'temu_username'")?.value;
+  const password = dbGet("SELECT value FROM settings WHERE key = 'temu_password'")?.value;
 
   if (!username || !password) {
     res.json({ success: false, error: 'Temu credentials not configured' });
@@ -24,7 +23,7 @@ listingRouter.post('/login', async (_req, res) => {
     await automation.init();
 
     // Try loading saved cookies first
-    const savedCookies = db.prepare("SELECT data FROM cookies WHERE domain = 'seller.temu.com'").get() as any;
+    const savedCookies = dbGet("SELECT data FROM cookies WHERE domain = 'seller.temu.com'");
     if (savedCookies?.data) {
       await automation.loadCookies(JSON.parse(savedCookies.data));
     }
@@ -42,8 +41,12 @@ listingRouter.post('/login', async (_req, res) => {
     if (result.success) {
       // Save cookies
       const cookies = await automation.saveCookies();
-      db.prepare("INSERT OR REPLACE INTO cookies (domain, data) VALUES ('seller.temu.com', ?)")
-        .run(JSON.stringify(cookies));
+      const existing = dbGet("SELECT 1 FROM cookies WHERE domain = 'seller.temu.com'");
+      if (existing) {
+        dbRun("UPDATE cookies SET data = ? WHERE domain = 'seller.temu.com'", [JSON.stringify(cookies)]);
+      } else {
+        dbRun("INSERT INTO cookies (domain, data) VALUES ('seller.temu.com', ?)", [JSON.stringify(cookies)]);
+      }
     }
 
     res.json({ success: result.success, error: result.error });
@@ -58,7 +61,6 @@ listingRouter.post('/batch', async (req, res) => {
 
   res.json({ success: true, data: { message: 'Batch listing started' } });
 
-  const db = getDb();
   const total = productIds.length;
 
   if (!automation) {
@@ -68,16 +70,16 @@ listingRouter.post('/batch', async (req, res) => {
 
   for (let i = 0; i < productIds.length; i++) {
     const productId = productIds[i];
-    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId) as any;
+    const product = dbGet('SELECT * FROM products WHERE id = ?', [productId]);
     if (!product) continue;
 
-    const mockups = db.prepare('SELECT * FROM mockup_images WHERE product_id = ? ORDER BY sort_order').all(productId) as any[];
-    const pricing = db.prepare(`
+    const mockups = dbAll('SELECT * FROM mockup_images WHERE product_id = ? ORDER BY sort_order', [productId]);
+    const pricing = dbGet(`
       SELECT pp.overrides, pt.default_values
       FROM product_pricing pp
       JOIN pricing_templates pt ON pt.id = pp.template_id
       WHERE pp.product_id = ?
-    `).get(productId) as any;
+    `, [productId]);
 
     broadcastToWeb({
       type: 'listing:progress',
@@ -105,10 +107,12 @@ listingRouter.post('/batch', async (req, res) => {
 
       const status = autoSubmit ? 'submitted' : 'waiting_confirm';
 
-      db.prepare('INSERT INTO listings (id, product_id, status, submitted_at) VALUES (?, ?, ?, ?)')
-        .run(uuid(), productId, status, new Date().toISOString());
+      dbRun(
+        'INSERT INTO listings (id, product_id, status, submitted_at) VALUES (?, ?, ?, ?)',
+        [uuid(), productId, status, new Date().toISOString()]
+      );
 
-      db.prepare("UPDATE products SET status = 'listed' WHERE id = ?").run(productId);
+      dbRun("UPDATE products SET status = 'listed' WHERE id = ?", [productId]);
 
       broadcastToWeb({
         type: 'listing:progress',
@@ -140,14 +144,13 @@ listingRouter.post('/batch', async (req, res) => {
 
 // GET /api/listing/status
 listingRouter.get('/status', (_req, res) => {
-  const db = getDb();
-  const listings = db.prepare(`
+  const listings = dbAll(`
     SELECT l.*, p.title as product_title
     FROM listings l
     JOIN products p ON p.id = l.product_id
     ORDER BY l.submitted_at DESC
     LIMIT 50
-  `).all();
+  `);
 
   res.json({ success: true, data: listings });
 });

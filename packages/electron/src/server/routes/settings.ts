@@ -1,12 +1,11 @@
 import { Router } from 'express';
-import { getDb } from '../../services/database';
+import { dbAll, dbGet, dbRun } from '../../services/database';
 
 export const settingsRouter = Router();
 
 // GET /api/settings
 settingsRouter.get('/', (_req, res) => {
-  const db = getDb();
-  const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+  const rows = dbAll('SELECT key, value FROM settings') as Array<{ key: string; value: string }>;
 
   const settings: Record<string, string> = {};
   for (const row of rows) {
@@ -39,32 +38,32 @@ settingsRouter.get('/', (_req, res) => {
 
 // PUT /api/settings
 settingsRouter.put('/', (req, res) => {
-  const db = getDb();
   const updates = req.body;
 
-  const upsert = db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  );
-
-  const updateAll = db.transaction(() => {
-    for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined && value !== null) {
-        upsert.run(key, String(value));
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined && value !== null) {
+      const existing = dbGet('SELECT 1 FROM settings WHERE key = ?', [key]);
+      if (existing) {
+        dbRun('UPDATE settings SET value = ? WHERE key = ?', [String(value), key]);
+      } else {
+        dbRun('INSERT INTO settings (key, value) VALUES (?, ?)', [key, String(value)]);
       }
     }
-  });
+  }
 
-  updateAll();
   res.json({ success: true });
 });
 
 // PUT /api/settings/:key
 settingsRouter.put('/:key', (req, res) => {
-  const db = getDb();
   const { value } = req.body;
 
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run(req.params.key, String(value));
+  const existing = dbGet('SELECT 1 FROM settings WHERE key = ?', [req.params.key]);
+  if (existing) {
+    dbRun('UPDATE settings SET value = ? WHERE key = ?', [String(value), req.params.key]);
+  } else {
+    dbRun('INSERT INTO settings (key, value) VALUES (?, ?)', [req.params.key, String(value)]);
+  }
 
   res.json({ success: true });
 });

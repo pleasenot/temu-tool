@@ -1,4 +1,4 @@
-import { getDb } from './database';
+import { dbGet } from './database';
 
 const MINIMAX_API_BASE = 'https://api.minimaxi.chat/v1';
 
@@ -17,8 +17,7 @@ export class MiniMaxClient {
     if (apiKey) {
       this.apiKey = apiKey;
     } else {
-      const db = getDb();
-      const row = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get() as any;
+      const row = dbGet("SELECT value FROM settings WHERE key = 'minimax_api_key'");
       this.apiKey = row?.value || '';
     }
   }

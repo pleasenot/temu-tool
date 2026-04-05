@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { WsMessage, ProductCollectMessage, ProductCollectAckMessage } from '@temu-lister/shared';
 import { v4 as uuid } from 'uuid';
-import { getDb } from '../services/database';
+import { dbRun } from '../services/database';
 
 type ClientType = 'extension' | 'web' | 'unknown';
 
@@ -59,31 +59,31 @@ function handleMessage(client: ConnectedClient, msg: WsMessage) {
   }
 }
 
-async function handleProductCollect(client: ConnectedClient, msg: ProductCollectMessage) {
+function handleProductCollect(client: ConnectedClient, msg: ProductCollectMessage) {
   try {
     const { title, url, price, currency, category, imageUrls, specifications, skuVariants } = msg.payload;
     const productId = uuid();
     const now = new Date().toISOString();
 
-    const db = getDb();
-    db.prepare(`
-      INSERT INTO products (id, title, original_url, price, currency, category, specifications, sku_variants, scraped_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'collected')
-    `).run(
-      productId, title, url, price || null, currency || 'USD',
-      category || null,
-      specifications ? JSON.stringify(specifications) : null,
-      skuVariants ? JSON.stringify(skuVariants) : null,
-      now
+    dbRun(
+      `INSERT INTO products (id, title, original_url, price, currency, category, specifications, sku_variants, scraped_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'collected')`,
+      [
+        productId, title, url, price || null, currency || 'USD',
+        category || null,
+        specifications ? JSON.stringify(specifications) : null,
+        skuVariants ? JSON.stringify(skuVariants) : null,
+        now,
+      ]
     );
 
-    // Download and save images
+    // Save image records
     for (let i = 0; i < imageUrls.length; i++) {
       const imageId = uuid();
-      db.prepare(`
-        INSERT INTO product_images (id, product_id, original_url, sort_order)
-        VALUES (?, ?, ?, ?)
-      `).run(imageId, productId, imageUrls[i], i);
+      dbRun(
+        'INSERT INTO product_images (id, product_id, original_url, sort_order) VALUES (?, ?, ?, ?)',
+        [imageId, productId, imageUrls[i], i]
+      );
     }
 
     // Send ACK back to extension

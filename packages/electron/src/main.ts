@@ -4,6 +4,10 @@ import { startHttpServer } from './server/http-server';
 import { startWsServer } from './server/ws-server';
 import { initDatabase } from './services/database';
 
+// Disable GPU to avoid crashes in environments without GPU support
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+
 const HTTP_PORT = 23790;
 const WS_PORT = 23789;
 

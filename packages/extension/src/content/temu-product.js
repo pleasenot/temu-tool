@@ -3,9 +3,6 @@
  * Adds a floating "Collect" button
  */
 
-// Inline the scraper since Chrome MV3 content scripts can't use ES modules
-// (scraper.js functions are loaded separately via manifest)
-
 function isProductPage() {
   const url = window.location.href;
   return /temu\.com.*\/.*g-/.test(url) || document.querySelector('h1') !== null;
@@ -14,49 +11,49 @@ function isProductPage() {
 function createCollectButton() {
   const btn = document.createElement('button');
   btn.id = 'temu-lister-collect-btn';
-  btn.textContent = '采集';
-  btn.style.cssText = `
-    position: fixed;
-    bottom: 80px;
-    right: 30px;
-    z-index: 99999;
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: #2563eb;
-    color: white;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
+  btn.textContent = '\u91c7\u96c6';
+  btn.style.cssText = [
+    'position: fixed',
+    'bottom: 80px',
+    'right: 30px',
+    'z-index: 99999',
+    'width: 56px',
+    'height: 56px',
+    'border-radius: 50%',
+    'background: #2563eb',
+    'color: white',
+    'border: none',
+    'cursor: pointer',
+    'font-size: 14px',
+    'font-weight: bold',
+    'box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4)',
+    'transition: all 0.2s',
+    'display: flex',
+    'align-items: center',
+    'justify-content: center'
+  ].join(';');
 
-  btn.addEventListener('mouseenter', () => {
+  btn.addEventListener('mouseenter', function() {
     btn.style.transform = 'scale(1.1)';
     btn.style.boxShadow = '0 6px 16px rgba(37, 99, 235, 0.5)';
   });
 
-  btn.addEventListener('mouseleave', () => {
+  btn.addEventListener('mouseleave', function() {
     btn.style.transform = 'scale(1)';
     btn.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.4)';
   });
 
-  btn.addEventListener('click', async () => {
+  btn.addEventListener('click', function() {
     btn.textContent = '...';
     btn.style.background = '#6b7280';
 
-    const product = scrapeProduct();
+    var product = scrapeProduct();
 
     if (!product || !product.title) {
-      btn.textContent = '失败';
+      btn.textContent = '\u5931\u8d25';
       btn.style.background = '#ef4444';
-      setTimeout(() => {
-        btn.textContent = '采集';
+      setTimeout(function() {
+        btn.textContent = '\u91c7\u96c6';
         btn.style.background = '#2563eb';
       }, 2000);
       return;
@@ -64,17 +61,17 @@ function createCollectButton() {
 
     chrome.runtime.sendMessage(
       { type: 'product:collect', payload: product },
-      (response) => {
-        if (response?.success) {
-          btn.textContent = '已采集';
+      function(response) {
+        if (response && response.success) {
+          btn.textContent = '\u5df2\u91c7\u96c6';
           btn.style.background = '#22c55e';
         } else {
-          btn.textContent = '失败';
+          btn.textContent = '\u5931\u8d25';
           btn.style.background = '#ef4444';
         }
 
-        setTimeout(() => {
-          btn.textContent = '采集';
+        setTimeout(function() {
+          btn.textContent = '\u91c7\u96c6';
           btn.style.background = '#2563eb';
         }, 2000);
       }
@@ -86,7 +83,7 @@ function createCollectButton() {
 
 function init() {
   if (document.getElementById('temu-lister-collect-btn')) return;
-  setTimeout(() => {
+  setTimeout(function() {
     if (isProductPage()) {
       document.body.appendChild(createCollectButton());
     }
@@ -95,11 +92,12 @@ function init() {
 
 init();
 
-let lastUrl = window.location.href;
-const observer = new MutationObserver(() => {
+var lastUrl = window.location.href;
+var observer = new MutationObserver(function() {
   if (window.location.href !== lastUrl) {
     lastUrl = window.location.href;
-    document.getElementById('temu-lister-collect-btn')?.remove();
+    var oldBtn = document.getElementById('temu-lister-collect-btn');
+    if (oldBtn) oldBtn.remove();
     setTimeout(init, 1500);
   }
 });

@@ -7,6 +7,10 @@ import { initDatabase } from './services/database';
 // Disable GPU to avoid crashes in environments without GPU support
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('no-sandbox');
 
 const HTTP_PORT = 23790;
 const WS_PORT = 23789;

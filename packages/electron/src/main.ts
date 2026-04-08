@@ -4,14 +4,28 @@ import { startHttpServer } from './server/http-server';
 import { startWsServer } from './server/ws-server';
 import { initDatabase } from './services/database';
 
+// Disable GPU to avoid crashes in environments without GPU support
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('no-sandbox');
+
 const HTTP_PORT = 23790;
 const WS_PORT = 23789;
 
 let tray: Tray | null = null;
 
 function createTray() {
-  // Use a simple 16x16 icon (will be replaced with a real icon later)
-  const icon = nativeImage.createEmpty();
+  // Create a minimal 16x16 tray icon
+  const icon = nativeImage.createFromBuffer(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAADklEQVQ4jWNgGAWDFQAAAhAAAbksmMoAAAAASUVORK5CYII=',
+      'base64'
+    ),
+    { width: 16, height: 16 }
+  );
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -40,7 +54,7 @@ function createTray() {
 
 app.whenReady().then(async () => {
   // Initialize database
-  initDatabase();
+  await initDatabase();
 
   // Start HTTP server (serves React SPA + REST API)
   startHttpServer(HTTP_PORT);
@@ -57,6 +71,6 @@ app.whenReady().then(async () => {
 });
 
 // Prevent Electron from quitting when all windows are closed (tray mode)
-app.on('window-all-closed', (e: Event) => {
-  e.preventDefault();
+app.on('window-all-closed', () => {
+  // Do nothing - keep running in tray mode
 });

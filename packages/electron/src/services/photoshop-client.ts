@@ -19,70 +19,54 @@ export class PhotoshopClient {
   private connected = false;
 
   /**
-   * Derive Triple-DES key from password
-   * PS uses a specific key derivation: password is hashed to produce a 24-byte key
+   * Derive Triple-DES key from password using Photoshop's PBKDF2 scheme.
+   * Spec (Adobe Generator / photoshop-connection):
+   *   key = PBKDF2-HMAC-SHA256(password, salt="Adobe Photoshop", iter=1000, len=24)
    */
+  // Verified against Adobe generator-core / ps_crypto.js:
+  //   PBKDF2-SHA1, salt="Adobe Photoshop", 1000 iter, 24-byte key
+  //   DES-EDE3-CBC, fixed IV 000000005d260000
+  private static readonly PS_IV = Buffer.from('000000005d260000', 'hex');
+
   private deriveKey(password: string): Buffer {
-    // Photoshop's key derivation: create 24-byte key from password
-    // Uses the password bytes, padding/repeating to fill 24 bytes
-    const key = Buffer.alloc(24, 0);
-    const passBytes = Buffer.from(password, 'utf8');
-
-    for (let i = 0; i < 24; i++) {
-      if (i < passBytes.length) {
-        key[i] = passBytes[i];
-      } else {
-        key[i] = 0;
-      }
-    }
-
-    return key;
+    return crypto.pbkdf2Sync(password, 'Adobe Photoshop', 1000, 24, 'sha1');
   }
 
   private encrypt(data: Buffer): Buffer {
     if (!this.encryptionKey) throw new Error('Not connected');
-
-    // Pad data to 8-byte boundary (DES block size)
-    const padLength = 8 - (data.length % 8);
-    const padded = Buffer.concat([data, Buffer.alloc(padLength, padLength)]);
-
-    const cipher = crypto.createCipheriv('des-ede3', this.encryptionKey, null);
-    cipher.setAutoPadding(false);
-    return Buffer.concat([cipher.update(padded), cipher.final()]);
+    const cipher = crypto.createCipheriv('des-ede3-cbc', this.encryptionKey, PhotoshopClient.PS_IV);
+    return Buffer.concat([cipher.update(data), cipher.final()]);
   }
 
   private decrypt(data: Buffer): Buffer {
     if (!this.encryptionKey) throw new Error('Not connected');
-
-    const decipher = crypto.createDecipheriv('des-ede3', this.encryptionKey, null);
-    decipher.setAutoPadding(false);
-    const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
-
-    // Remove PKCS padding
-    const padLength = decrypted[decrypted.length - 1];
-    if (padLength > 0 && padLength <= 8) {
-      return decrypted.subarray(0, decrypted.length - padLength);
-    }
-    return decrypted;
+    const decipher = crypto.createDecipheriv('des-ede3-cbc', this.encryptionKey, PhotoshopClient.PS_IV);
+    return Buffer.concat([decipher.update(data), decipher.final()]);
   }
 
-  private buildMessage(contentType: number, body: string): Buffer {
+  /**
+   * Photoshop wire format (per Adobe Generator / photoshop-connection):
+   *   [length 4B BE] [communication_status 4B BE PLAIN] [encrypted_inner...]
+   *   length = 4 (status) + encrypted_inner.length
+   *   encrypted_inner (after decrypt) = [protocol 4B][transactionId 4B][contentType 4B][body...]
+   *   contentType: 1 = ECMAScript, 2 = ImagePixmap, 3 = ImageJPEG, 4 = ProfileError, 5 = Profile
+   */
+  private buildMessage(txId: number, contentType: number, body: string): Buffer {
     const bodyBuf = Buffer.from(body, 'utf8');
-    // Header: status(4) + protocol(4) + transaction_id(4) + content_type(4) = 16 bytes
-    const header = Buffer.alloc(16);
-    header.writeInt32BE(0, 0);              // status: 0 = no error
-    header.writeInt32BE(1, 4);              // protocol version: 1
-    header.writeInt32BE(this.transactionId, 8); // transaction ID
-    header.writeInt32BE(contentType, 12);   // content type: 1 = JavaScript
+    const inner = Buffer.alloc(12 + bodyBuf.length);
+    inner.writeInt32BE(1, 0);          // protocol version
+    inner.writeInt32BE(txId, 4);       // transaction id
+    inner.writeInt32BE(contentType, 8);
+    bodyBuf.copy(inner, 12);
 
-    const payload = Buffer.concat([header, bodyBuf]);
-    const encrypted = this.encrypt(payload);
+    const encrypted = this.encrypt(inner);
 
-    // Length prefix (4 bytes, big-endian)
     const lengthPrefix = Buffer.alloc(4);
-    lengthPrefix.writeInt32BE(encrypted.length, 0);
+    lengthPrefix.writeInt32BE(4 + encrypted.length, 0); // length includes status field
+    const statusField = Buffer.alloc(4);
+    statusField.writeInt32BE(0, 0); // 0 = no error
 
-    return Buffer.concat([lengthPrefix, encrypted]);
+    return Buffer.concat([lengthPrefix, statusField, encrypted]);
   }
 
   async connect(host: string, port: number, password: string): Promise<void> {
@@ -127,32 +111,40 @@ export class PhotoshopClient {
   }
 
   private processReceiveBuffer() {
-    while (this.receiveBuffer.length >= 4) {
+    while (this.receiveBuffer.length >= 8) {
       const msgLength = this.receiveBuffer.readInt32BE(0);
-      if (this.receiveBuffer.length < 4 + msgLength) break; // Wait for more data
+      if (this.receiveBuffer.length < 4 + msgLength) break; // wait for full frame
 
-      const encrypted = this.receiveBuffer.subarray(4, 4 + msgLength);
+      const status = this.receiveBuffer.readInt32BE(4);
+      const encrypted = this.receiveBuffer.subarray(8, 4 + msgLength);
       this.receiveBuffer = this.receiveBuffer.subarray(4 + msgLength);
 
       try {
         const decrypted = this.decrypt(encrypted);
+        if (decrypted.length < 12) continue;
 
-        if (decrypted.length < 16) continue;
+        const _protocol = decrypted.readInt32BE(0);
+        const txId = decrypted.readInt32BE(4);
+        const contentType = decrypted.readInt32BE(8);
+        const body = decrypted.subarray(12).toString('utf8');
 
-        const status = decrypted.readInt32BE(0);
-        const _protocol = decrypted.readInt32BE(4);
-        const txId = decrypted.readInt32BE(8);
-        const contentType = decrypted.readInt32BE(12);
-        const body = decrypted.subarray(16).toString('utf8');
+        console.log(`[PS] frame status=${status} txId=${txId} type=${contentType} bodyLen=${body.length} body=${body.substring(0, 200)}`);
 
         const cb = this.pendingCallbacks.get(txId);
-        if (cb) {
-          this.pendingCallbacks.delete(txId);
-          if (status !== 0 || contentType === 4) {
-            cb.reject(new Error(`Photoshop error: ${body}`));
-          } else {
-            cb.resolve(body);
-          }
+        if (!cb) continue;
+
+        // Skip empty/keepalive intermediate frames; wait for the real script result
+        if (contentType === 6) continue; // KEEPALIVE
+        if (contentType === 2 || contentType === 10) {
+          // Sometimes PS sends an initial empty body before the real result
+          if (body.length === 0) continue;
+        }
+
+        this.pendingCallbacks.delete(txId);
+        if (status !== 0 || contentType === 1) {
+          cb.reject(new Error(`Photoshop error (status=${status}, type=${contentType}): ${body}`));
+        } else {
+          cb.resolve(body);
         }
       } catch (err) {
         console.error('Error processing PS response:', err);
@@ -184,25 +176,8 @@ export class PhotoshopClient {
         },
       });
 
-      // Build and send message with content type 1 (JavaScript)
-      const msg = this.buildMessage(1, jsx);
-
-      // Update transaction ID in the already-built message
-      // (transaction ID was set before incrementing)
-      const headerBuf = Buffer.alloc(16);
-      headerBuf.writeInt32BE(0, 0);
-      headerBuf.writeInt32BE(1, 4);
-      headerBuf.writeInt32BE(txId, 8);
-      headerBuf.writeInt32BE(1, 12);
-
-      const bodyBuf = Buffer.from(jsx, 'utf8');
-      const payload = Buffer.concat([headerBuf, bodyBuf]);
-      const encrypted = this.encrypt(payload);
-
-      const lengthPrefix = Buffer.alloc(4);
-      lengthPrefix.writeInt32BE(encrypted.length, 0);
-
-      this.socket!.write(Buffer.concat([lengthPrefix, encrypted]));
+      const frame = this.buildMessage(txId, 10, jsx); // 10 = JAVASCRIPT_S (reuse engine, returns result)
+      this.socket!.write(frame);
     });
   }
 

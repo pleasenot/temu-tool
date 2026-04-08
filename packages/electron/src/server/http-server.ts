@@ -1,17 +1,21 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import { getUploadsDir } from '../services/storage';
 import { productsRouter } from './routes/products';
 import { mockupRouter } from './routes/mockup';
 import { pricingRouter } from './routes/pricing';
 import { listingRouter } from './routes/listing';
 import { settingsRouter } from './routes/settings';
 
-export function startHttpServer(port: number) {
+export function startHttpServer(port: number): void {
   const app = express();
 
   app.use(cors({ origin: '*' }));
   app.use(express.json({ limit: '50mb' }));
+
+  // Serve uploaded local images
+  app.use('/uploads', express.static(getUploadsDir()));
 
   // REST API routes
   app.use('/api/products', productsRouter);
@@ -21,7 +25,7 @@ export function startHttpServer(port: number) {
   app.use('/api/settings', settingsRouter);
 
   // Serve React SPA static files
-  const webDistPath = path.resolve(__dirname, '../../web/dist');
+  const webDistPath = path.resolve(__dirname, '../../../web/dist');
   app.use(express.static(webDistPath));
 
   // SPA fallback - serve index.html for all non-API routes
@@ -33,5 +37,4 @@ export function startHttpServer(port: number) {
     console.log(`HTTP server listening on http://localhost:${port}`);
   });
 
-  return app;
 }

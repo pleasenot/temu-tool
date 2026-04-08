@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { v4 as uuid } from 'uuid';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import type { ApiResponse, PricingTemplateListResponse } from '@temu-lister/shared';
 
-export const pricingRouter = Router();
+export const pricingRouter: RouterType = Router();
 
 // GET /api/pricing/templates
 pricingRouter.get('/templates', (_req, res) => {

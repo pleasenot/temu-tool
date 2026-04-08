@@ -1,7 +1,7 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 
-export const settingsRouter = Router();
+export const settingsRouter: RouterType = Router();
 
 // GET /api/settings
 settingsRouter.get('/', (_req, res) => {

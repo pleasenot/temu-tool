@@ -22,6 +22,12 @@ export const api = {
       request(`/products/${id}`),
     delete: (id: string) =>
       request(`/products/${id}`, { method: 'DELETE' }),
+    update: (id: string, data: { title?: string; price?: number; category?: string }) =>
+      request(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    addImage: (id: string, url: string) =>
+      request(`/products/${id}/images`, { method: 'POST', body: JSON.stringify({ url }) }),
+    deleteImage: (id: string, imageId: string) =>
+      request(`/products/${id}/images/${imageId}`, { method: 'DELETE' }),
   },
 
   mockup: {

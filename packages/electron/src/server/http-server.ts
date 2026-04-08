@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import { getUploadsDir } from '../services/storage';
 import { productsRouter } from './routes/products';
 import { mockupRouter } from './routes/mockup';
 import { pricingRouter } from './routes/pricing';
@@ -12,6 +13,9 @@ export function startHttpServer(port: number): void {
 
   app.use(cors({ origin: '*' }));
   app.use(express.json({ limit: '50mb' }));
+
+  // Serve uploaded local images
+  app.use('/uploads', express.static(getUploadsDir()));
 
   // REST API routes
   app.use('/api/products', productsRouter);

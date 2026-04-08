@@ -2,6 +2,7 @@ var WS_URL = 'ws://localhost:23789';
 
 var ws = null;
 var pendingMessages = [];
+var pendingAcks = {}; // id -> sendResponse callback
 
 function connectWs() {
   return new Promise(function(resolve, reject) {
@@ -41,7 +42,11 @@ function connectWs() {
       try {
         var msg = JSON.parse(event.data);
         if (msg.type === 'product:collect:ack') {
-          chrome.runtime.sendMessage(msg).catch(function() {});
+          var reqId = msg.payload && msg.payload.requestId;
+          if (reqId && pendingAcks[reqId]) {
+            pendingAcks[reqId](msg.payload);
+            delete pendingAcks[reqId];
+          }
         }
       } catch (e) {}
     };
@@ -50,20 +55,32 @@ function connectWs() {
 
 chrome.runtime.onMessage.addListener(function(message, _sender, sendResponse) {
   if (message.type === 'product:collect') {
+    var reqId = crypto.randomUUID();
     var wsMsg = {
       type: 'product:collect',
-      id: crypto.randomUUID(),
+      id: reqId,
       timestamp: Date.now(),
-      payload: message.payload
+      payload: Object.assign({ requestId: reqId }, message.payload)
     };
+
+    pendingAcks[reqId] = sendResponse;
+    // Timeout safety net
+    setTimeout(function() {
+      if (pendingAcks[reqId]) {
+        pendingAcks[reqId]({ success: false, error: '后端无响应' });
+        delete pendingAcks[reqId];
+      }
+    }, 10000);
 
     connectWs()
       .then(function(socket) {
         socket.send(JSON.stringify(wsMsg));
-        sendResponse({ success: true });
       })
       .catch(function(err) {
-        sendResponse({ success: false, error: err.message });
+        if (pendingAcks[reqId]) {
+          pendingAcks[reqId]({ success: false, error: err.message });
+          delete pendingAcks[reqId];
+        }
       });
 
     return true;

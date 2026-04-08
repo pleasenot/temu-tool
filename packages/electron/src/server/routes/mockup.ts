@@ -140,15 +140,28 @@ mockupRouter.post('/batch', async (req, res) => {
   }
 });
 
-// POST /api/mockup/test-connection - Test PS connection
+// POST /api/mockup/test-connection - Test PS connection (real handshake + JSX ping)
 mockupRouter.post('/test-connection', async (req, res) => {
   const { host, port, password } = req.body;
+  const client = new PhotoshopClient();
   try {
-    const client = new PhotoshopClient();
     await client.connect(host || '127.0.0.1', port || 49494, password || '');
+    // Run a real JSX command. PS will compute & send back a string we can verify.
+    const jsx = `
+      var docName = (app.documents.length > 0) ? app.activeDocument.name : "(no document)";
+      "PS " + app.version + " | docs=" + app.documents.length + " | active=" + docName + " | os=" + $.os;
+    `;
+    const result = await client.executeScript(jsx, 8000);
     client.disconnect();
-    res.json({ success: true, data: { message: 'Connected to Photoshop successfully' } });
+    res.json({
+      success: true,
+      data: {
+        message: 'Photoshop verified ✓',
+        info: result,
+      },
+    });
   } catch (err) {
+    try { client.disconnect(); } catch {}
     res.json({ success: false, error: String(err) });
   }
 });

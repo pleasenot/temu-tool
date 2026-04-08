@@ -28,6 +28,24 @@ export const api = {
       request(`/products/${id}/images`, { method: 'POST', body: JSON.stringify({ url }) }),
     deleteImage: (id: string, imageId: string) =>
       request(`/products/${id}/images/${imageId}`, { method: 'DELETE' }),
+    uploadImage: async (id: string, file: File) => {
+      const res = await fetch(`/api/products/${id}/images/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      if (!res.ok) throw new Error('upload failed: ' + res.status);
+      return res.json();
+    },
+    replaceImage: async (id: string, imageId: string, file: File) => {
+      const res = await fetch(`/api/products/${id}/images/${imageId}/upload`, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      if (!res.ok) throw new Error('replace failed: ' + res.status);
+      return res.json();
+    },
   },
 
   mockup: {

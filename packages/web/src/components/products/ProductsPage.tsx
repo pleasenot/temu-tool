@@ -295,6 +295,23 @@ function ProductEditModal({ productId, onClose, onSaved }: {
     } catch (e) { alert('删除失败：' + (e as Error).message); }
   }
 
+  async function uploadFiles(files: FileList | null) {
+    if (!files || !files.length) return;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        await api.products.uploadImage(productId, files[i]);
+      }
+      load();
+    } catch (e) { alert('上传失败：' + (e as Error).message); }
+  }
+
+  async function replaceImage(imageId: string, file: File) {
+    try {
+      await api.products.replaceImage(productId, imageId, file);
+      load();
+    } catch (e) { alert('替换失败：' + (e as Error).message); }
+  }
+
   return (
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -364,6 +381,21 @@ function ProductEditModal({ productId, onClose, onSaved }: {
                             'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23ccc"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>';
                         }}
                       />
+                      <div className="absolute inset-x-0 bottom-0 flex gap-1 p-1 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition">
+                        <label className="flex-1 text-center text-white text-[11px] bg-blue-600/90 hover:bg-blue-600 rounded py-1 cursor-pointer">
+                          替换
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) replaceImage(img.id, f);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
                       <button
                         onClick={() => removeImage(img.id)}
                         className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs opacity-0 group-hover:opacity-100 transition"
@@ -389,8 +421,18 @@ function ProductEditModal({ productId, onClose, onSaved }: {
                   onClick={addImage}
                   className="px-4 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
                 >
-                  添加图片
+                  添加 URL
                 </button>
+                <label className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 cursor-pointer">
+                  上传本地
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => { uploadFiles(e.target.files); e.target.value = ''; }}
+                  />
+                </label>
               </div>
             </div>
           </div>

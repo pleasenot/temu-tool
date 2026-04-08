@@ -74,6 +74,13 @@ export const api = {
 
   listing: {
     login: () => request('/listing/login', { method: 'POST' }),
+    logout: () => request('/listing/logout', { method: 'POST' }),
+    loginStatus: () => request('/listing/login-status'),
+    saveCredentials: (username: string, password: string) =>
+      request('/listing/credentials', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      }),
     startBatch: (productIds: string[], autoSubmit = false) =>
       request('/listing/batch', { method: 'POST', body: JSON.stringify({ productIds, autoSubmit }) }),
     status: () => request('/listing/status'),

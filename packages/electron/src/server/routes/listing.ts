@@ -1,35 +1,66 @@
 import { Router, type Router as RouterType } from 'express';
 import { v4 as uuid } from 'uuid';
 import { dbAll, dbGet, dbRun } from '../../services/database';
+import { getSetting, setSetting, hasSetting } from '../../services/secure-settings';
 import { TemuListingAutomation } from '../../services/playwright-automation';
 import { broadcastToWeb } from '../ws-server';
 
 export const listingRouter: RouterType = Router();
 
+// Singleton automation: persistent context lives for the app's lifetime so
+// repeated logins/listings reuse the same browser process.
 let automation: TemuListingAutomation | null = null;
 
-// POST /api/listing/login - Test Temu login
+function getAutomation(): TemuListingAutomation {
+  if (!automation) automation = new TemuListingAutomation();
+  return automation;
+}
+
+// GET /api/listing/login-status - cheap check using persistent profile
+listingRouter.get('/login-status', async (_req, res) => {
+  try {
+    const username = getSetting('temu_username') || '';
+    const hasPwd = hasSetting('temu_password');
+    const loggedIn = await getAutomation().checkLoginStatus();
+    res.json({
+      success: true,
+      data: {
+        loggedIn,
+        username,
+        hasPassword: hasPwd,
+      },
+    });
+  } catch (err) {
+    res.json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/listing/credentials - save phone/password (encrypted via secure-settings)
+listingRouter.post('/credentials', (req, res) => {
+  const { username, password } = req.body || {};
+  if (typeof username !== 'string' || !username.trim()) {
+    res.json({ success: false, error: '手机号不能为空' });
+    return;
+  }
+  setSetting('temu_username', username.trim());
+  if (typeof password === 'string' && password.length > 0) {
+    setSetting('temu_password', password);
+  }
+  res.json({ success: true });
+});
+
+// POST /api/listing/login - open headed Chrome and run the auto-fill flow
 listingRouter.post('/login', async (_req, res) => {
-  const username = dbGet("SELECT value FROM settings WHERE key = 'temu_username'")?.value;
-  const password = dbGet("SELECT value FROM settings WHERE key = 'temu_password'")?.value;
+  const username = getSetting('temu_username');
+  const password = getSetting('temu_password');
 
   if (!username || !password) {
-    res.json({ success: false, error: 'Temu credentials not configured' });
+    res.json({ success: false, error: '请先在账号管理页填写手机号和密码' });
     return;
   }
 
   try {
-    automation = new TemuListingAutomation();
-    await automation.init();
-
-    // Try loading saved cookies first
-    const savedCookies = dbGet("SELECT data FROM cookies WHERE domain = 'seller.temu.com'");
-    if (savedCookies?.data) {
-      await automation.loadCookies(JSON.parse(savedCookies.data));
-    }
-
-    const result = await automation.login(username, password, (msg: string) => {
-      // Notify web UI about CAPTCHA
+    const result = await getAutomation().login(username, password, (msg: string) => {
       broadcastToWeb({
         type: 'listing:captcha',
         id: uuid(),
@@ -38,18 +69,20 @@ listingRouter.post('/login', async (_req, res) => {
       });
     });
 
-    if (result.success) {
-      // Save cookies
-      const cookies = await automation.saveCookies();
-      const existing = dbGet("SELECT 1 FROM cookies WHERE domain = 'seller.temu.com'");
-      if (existing) {
-        dbRun("UPDATE cookies SET data = ? WHERE domain = 'seller.temu.com'", [JSON.stringify(cookies)]);
-      } else {
-        dbRun("INSERT INTO cookies (domain, data) VALUES ('seller.temu.com', ?)", [JSON.stringify(cookies)]);
-      }
-    }
-
     res.json({ success: result.success, error: result.error });
+  } catch (err) {
+    res.json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/listing/logout - drop the persisted Chrome profile
+listingRouter.post('/logout', async (_req, res) => {
+  try {
+    if (automation) {
+      await automation.logout();
+      automation = null;
+    }
+    res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: String(err) });
   }
@@ -62,11 +95,7 @@ listingRouter.post('/batch', async (req, res) => {
   res.json({ success: true, data: { message: 'Batch listing started' } });
 
   const total = productIds.length;
-
-  if (!automation) {
-    automation = new TemuListingAutomation();
-    await automation.init();
-  }
+  const auto = getAutomation();
 
   for (let i = 0; i < productIds.length; i++) {
     const productId = productIds[i];
@@ -98,7 +127,7 @@ listingRouter.post('/batch', async (req, res) => {
         ? { ...JSON.parse(pricing.default_values), ...(pricing.overrides ? JSON.parse(pricing.overrides) : {}) }
         : null;
 
-      await automation.createListing({
+      await auto.createListing({
         title: product.title,
         images: mockups.map((m: any) => m.output_path),
         pricing: pricingValues,

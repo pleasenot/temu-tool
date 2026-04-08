@@ -1,9 +1,13 @@
 import { Router, type Router as RouterType } from 'express';
-import { dbAll, dbGet, dbRun } from '../../services/database';
+import { dbAll } from '../../services/database';
+import { setSetting, isSecureKey } from '../../services/secure-settings';
+import { isEncrypted } from '../../services/encryption';
 
 export const settingsRouter: RouterType = Router();
 
 // GET /api/settings
+// Note: secret values (ps_password, minimax_api_key, temu_password) are
+// never returned in plaintext — only a boolean "is set" flag.
 settingsRouter.get('/', (_req, res) => {
   const rows = dbAll('SELECT key, value FROM settings') as Array<{ key: string; value: string }>;
 
@@ -12,20 +16,25 @@ settingsRouter.get('/', (_req, res) => {
     settings[row.key] = row.value;
   }
 
+  const hasSecret = (key: string) => {
+    const v = settings[key];
+    return !!v && (isEncrypted(v) || v.length > 0);
+  };
+
   res.json({
     success: true,
     data: {
       photoshop: {
         host: settings.ps_host || '127.0.0.1',
         port: parseInt(settings.ps_port || '49494'),
-        password: settings.ps_password ? '***' : '',
+        password: hasSecret('ps_password') ? '***' : '',
       },
       minimax: {
-        apiKey: settings.minimax_api_key ? '***' : '',
+        apiKey: hasSecret('minimax_api_key') ? '***' : '',
       },
       temu: {
         username: settings.temu_username || '',
-        hasPassword: !!settings.temu_password,
+        hasPassword: hasSecret('temu_password'),
       },
       directories: {
         templates: settings.templates_dir || '',
@@ -36,34 +45,22 @@ settingsRouter.get('/', (_req, res) => {
   });
 });
 
-// PUT /api/settings
+// PUT /api/settings - bulk update; secret keys are auto-encrypted
 settingsRouter.put('/', (req, res) => {
   const updates = req.body;
 
   for (const [key, value] of Object.entries(updates)) {
     if (value !== undefined && value !== null) {
-      const existing = dbGet('SELECT 1 FROM settings WHERE key = ?', [key]);
-      if (existing) {
-        dbRun('UPDATE settings SET value = ? WHERE key = ?', [String(value), key]);
-      } else {
-        dbRun('INSERT INTO settings (key, value) VALUES (?, ?)', [key, String(value)]);
-      }
+      setSetting(key, String(value));
     }
   }
 
   res.json({ success: true });
 });
 
-// PUT /api/settings/:key
+// PUT /api/settings/:key - single key update
 settingsRouter.put('/:key', (req, res) => {
   const { value } = req.body;
-
-  const existing = dbGet('SELECT 1 FROM settings WHERE key = ?', [req.params.key]);
-  if (existing) {
-    dbRun('UPDATE settings SET value = ? WHERE key = ?', [String(value), req.params.key]);
-  } else {
-    dbRun('INSERT INTO settings (key, value) VALUES (?, ?)', [req.params.key, String(value)]);
-  }
-
-  res.json({ success: true });
+  setSetting(req.params.key, String(value));
+  res.json({ success: true, encrypted: isSecureKey(req.params.key) });
 });

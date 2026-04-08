@@ -3,6 +3,8 @@ import path from 'path';
 import { startHttpServer } from './server/http-server';
 import { startWsServer } from './server/ws-server';
 import { initDatabase } from './services/database';
+import { migrateLegacyPlaintextSecrets } from './services/secure-settings';
+import { isEncryptionAvailable } from './services/encryption';
 
 // Disable GPU to avoid crashes in environments without GPU support
 app.disableHardwareAcceleration();
@@ -55,6 +57,17 @@ function createTray() {
 app.whenReady().then(async () => {
   // Initialize database
   await initDatabase();
+
+  // One-shot migration: encrypt any legacy plaintext secrets in the settings
+  // table. Safe to call repeatedly. Logs a warning if the OS keychain isn't
+  // available — in that case secrets stay plaintext as a fallback.
+  if (isEncryptionAvailable()) {
+    migrateLegacyPlaintextSecrets();
+  } else {
+    console.warn(
+      '[security] safeStorage encryption not available on this system — secrets will be stored as plaintext.'
+    );
+  }
 
   // Start HTTP server (serves React SPA + REST API)
   startHttpServer(HTTP_PORT);

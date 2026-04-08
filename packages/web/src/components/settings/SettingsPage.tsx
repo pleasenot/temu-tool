@@ -11,8 +11,6 @@ export function SettingsPage() {
   const [psPort, setPsPort] = useState('49494');
   const [psPassword, setPsPassword] = useState('');
   const [minimaxApiKey, setMinimaxApiKey] = useState('');
-  const [temuUsername, setTemuUsername] = useState('');
-  const [temuPassword, setTemuPassword] = useState('');
   const [templatesDir, setTemplatesDir] = useState('');
   const [inputDir, setInputDir] = useState('');
   const [outputDir, setOutputDir] = useState('');
@@ -27,7 +25,6 @@ export function SettingsPage() {
       const s = res.data;
       setPsHost(s.photoshop.host);
       setPsPort(String(s.photoshop.port));
-      setTemuUsername(s.temu.username);
       setTemplatesDir(s.directories.templates);
       setInputDir(s.directories.input);
       setOutputDir(s.directories.output);
@@ -49,8 +46,6 @@ export function SettingsPage() {
 
       if (psPassword) updates.ps_password = psPassword;
       if (minimaxApiKey) updates.minimax_api_key = minimaxApiKey;
-      if (temuUsername) updates.temu_username = temuUsername;
-      if (temuPassword) updates.temu_password = temuPassword;
 
       await api.settings.update(updates);
       setMessage('设置已保存');
@@ -115,25 +110,6 @@ export function SettingsPage() {
         <input type="password" value={minimaxApiKey} onChange={(e) => setMinimaxApiKey(e.target.value)}
           placeholder={settings.minimax?.apiKey ? '已设置' : '输入 MiniMax API Key'}
           className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-      </section>
-
-      {/* Temu */}
-      <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">Temu 卖家中心</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">手机号</label>
-            <input value={temuUsername} onChange={(e) => setTemuUsername(e.target.value)}
-              placeholder="Temu 卖家账号"
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">密码</label>
-            <input type="password" value={temuPassword} onChange={(e) => setTemuPassword(e.target.value)}
-              placeholder={settings.temu?.hasPassword ? '已设置' : '输入密码'}
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-        </div>
       </section>
 
       {/* Directories */}

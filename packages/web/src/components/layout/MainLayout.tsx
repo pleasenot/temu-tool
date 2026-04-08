@@ -5,6 +5,7 @@ const navItems = [
   { path: '/mockup', label: '批量套图', icon: '🖼️' },
   { path: '/pricing', label: '核价模板', icon: '💰' },
   { path: '/listing', label: '自动上品', icon: '🚀' },
+  { path: '/account', label: '账号管理', icon: '👤' },
   { path: '/settings', label: '设置', icon: '⚙️' },
 ];
 

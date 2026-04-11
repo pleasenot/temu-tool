@@ -1,10 +1,8 @@
 import { Outlet, NavLink } from 'react-router-dom';
 
 const navItems = [
-  { path: '/products', label: '产品管理', icon: '📦' },
-  { path: '/mockup', label: '批量套图', icon: '🖼️' },
-  { path: '/pricing', label: '核价模板', icon: '💰' },
   { path: '/listing', label: '自动上品', icon: '🚀' },
+  { path: '/mockup', label: '批量套图', icon: '🖼️' },
   { path: '/account', label: '账号管理', icon: '👤' },
   { path: '/settings', label: '设置', icon: '⚙️' },
 ];

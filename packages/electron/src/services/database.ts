@@ -163,6 +163,32 @@ function createTables() {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS product_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      ref_product_id TEXT,
+      cat_id INTEGER,
+      cat_name TEXT,
+      cat_ids TEXT,
+      properties TEXT,
+      spec_config TEXT,
+      sku_config TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  // Migrate: add new template fields (idempotent — ALTER TABLE throws if column exists)
+  const newCols = [
+    'size_info TEXT', 'image_index INTEGER', 'product_code TEXT',
+    'volume_len_cm REAL', 'volume_width_cm REAL', 'volume_height_cm REAL',
+    'weight_g REAL', 'declared_price REAL', 'retail_price REAL',
+  ];
+  for (const col of newCols) {
+    try { db.run(`ALTER TABLE product_templates ADD COLUMN ${col}`); } catch {}
+  }
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS cookies (
       domain TEXT PRIMARY KEY,
       data TEXT

@@ -60,18 +60,6 @@ export const api = {
       request('/mockup/test-connection', { method: 'POST', body: JSON.stringify({ host, port, password }) }),
   },
 
-  pricing: {
-    templates: () => request('/pricing/templates'),
-    createTemplate: (data: { name: string; defaultValues: any }) =>
-      request('/pricing/templates', { method: 'POST', body: JSON.stringify(data) }),
-    updateTemplate: (id: string, data: { name: string; defaultValues: any }) =>
-      request(`/pricing/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    deleteTemplate: (id: string) =>
-      request(`/pricing/templates/${id}`, { method: 'DELETE' }),
-    apply: (templateId: string, productIds: string[]) =>
-      request('/pricing/apply', { method: 'POST', body: JSON.stringify({ templateId, productIds }) }),
-  },
-
   listing: {
     login: () => request('/listing/login', { method: 'POST' }),
     logout: () => request('/listing/logout', { method: 'POST' }),
@@ -83,7 +71,29 @@ export const api = {
       }),
     startBatch: (productIds: string[], autoSubmit = false) =>
       request('/listing/batch', { method: 'POST', body: JSON.stringify({ productIds, autoSubmit }) }),
+    batchPublish: (productIds: string[], templateId: string) =>
+      request('/listing/batch-publish', { method: 'POST', body: JSON.stringify({ productIds, templateId }) }),
+    shopProducts: (params?: { page?: number; pageSize?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.page) qs.set('page', String(params.page));
+      if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+      const suffix = qs.toString() ? `?${qs}` : '';
+      return request<any>(`/listing/shop-products${suffix}`);
+    },
     status: () => request('/listing/status'),
+  },
+
+  templates: {
+    list: () => request<any>('/templates'),
+    get: (id: string) => request<any>(`/templates/${id}`),
+    create: (data: { name: string; refProductId?: string }) =>
+      request('/templates', { method: 'POST', body: JSON.stringify(data) }),
+    createFromProduct: (name: string, refProductId: string) =>
+      request('/templates/create-from-product', { method: 'POST', body: JSON.stringify({ name, refProductId }) }),
+    update: (id: string, data: any) =>
+      request(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request(`/templates/${id}`, { method: 'DELETE' }),
   },
 
   settings: {

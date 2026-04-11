@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, connectWebSocket } from '../../api/client';
+import { ProductEditModal } from '../products/ProductEditModal';
 
 interface Template {
   id: string;
@@ -24,14 +25,18 @@ interface Product {
   price?: number;
   currency?: string;
   status: string;
-  images?: { original_url: string }[];
+  thumbnail?: string | null;
+  image_count?: number;
 }
 
 interface ShopProduct {
   productId: number;
   productName: string;
   thumbUrl: string;
+  catName?: string;
 }
+
+const SHOP_PAGE_SIZE = 20;
 
 const EMPTY_FORM: Omit<Template, 'id' | 'created_at'> = {
   name: '', ref_product_id: '', size_info: '', product_code: '',
@@ -59,14 +64,20 @@ export function ListingPage() {
   const [progress, setProgress] = useState<any>(null);
   const [listings, setListings] = useState<any[]>([]);
 
-  // Shop products modal
+  // Shop products modal (with pagination)
   const [showShopModal, setShowShopModal] = useState(false);
   const [shopProducts, setShopProducts] = useState<ShopProduct[]>([]);
   const [shopLoading, setShopLoading] = useState(false);
+  const [shopPage, setShopPage] = useState(1);
+  const [shopTotal, setShopTotal] = useState(0);
+  const [shopJumpInput, setShopJumpInput] = useState('');
 
   // Batch edit modal
   const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [batchTitle, setBatchTitle] = useState('');
+
+  // Product edit modal
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     const [tplRes, prodRes, listRes]: any[] = await Promise.all([
@@ -154,25 +165,54 @@ export function ListingPage() {
   }
 
   // ---- Shop products modal ----
-  async function openShopModal() {
-    setShowShopModal(true);
+  async function loadShopPage(page: number) {
     setShopLoading(true);
     try {
-      const res: any = await api.listing.shopProducts();
+      const res: any = await api.listing.shopProducts({ page, pageSize: SHOP_PAGE_SIZE });
       if (res.data?.loggedIn === false) {
         alert('Temu 卖家中心未登录，请先在"账号管理"页面登录后再获取店铺商品。');
         setShopProducts([]);
+        setShopTotal(0);
         setShowShopModal(false);
       } else {
         setShopProducts(res.data?.list || []);
+        setShopTotal(res.data?.total || 0);
+        setShopPage(page);
       }
-    } catch { setShopProducts([]); }
+    } catch {
+      setShopProducts([]);
+      setShopTotal(0);
+    }
     setShopLoading(false);
+  }
+
+  async function openShopModal() {
+    setShowShopModal(true);
+    setShopJumpInput('');
+    await loadShopPage(1);
   }
 
   function selectShopProduct(p: ShopProduct) {
     setTemplateForm({ ...templateForm, ref_product_id: String(p.productId) });
     setShowShopModal(false);
+  }
+
+  function handleShopJump() {
+    const total = Math.max(1, Math.ceil(shopTotal / SHOP_PAGE_SIZE));
+    const n = parseInt(shopJumpInput, 10);
+    if (!Number.isFinite(n) || n < 1 || n > total) return;
+    loadShopPage(n);
+  }
+
+  // ---- Batch delete ----
+  async function batchDelete() {
+    if (selected.size === 0) return;
+    if (!confirm(`确定删除选中的 ${selected.size} 个产品吗？此操作不可撤销。`)) return;
+    for (const id of selected) {
+      try { await api.products.delete(id); } catch (e) { console.error('delete failed', id, e); }
+    }
+    setSelected(new Set());
+    loadData();
   }
 
   // ---- Product selection ----
@@ -382,6 +422,12 @@ export function ListingPage() {
               批量编辑 ({selected.size})
             </button>
 
+            <button onClick={batchDelete}
+              disabled={selected.size === 0}
+              className="px-3 py-2 text-sm bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 disabled:opacity-50">
+              批量删除 ({selected.size})
+            </button>
+
             <button onClick={batchPublish}
               disabled={publishing || selected.size === 0 || !activeTemplateId}
               className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
@@ -417,24 +463,39 @@ export function ListingPage() {
                     <input type="checkbox" checked={selected.size === products.length && products.length > 0}
                       onChange={toggleSelectAll} />
                   </th>
-                  <th className="p-2 text-left w-12">图片</th>
+                  <th className="p-2 text-left w-14">图片</th>
                   <th className="p-2 text-left">标题</th>
                   <th className="p-2 text-left w-20">价格</th>
                   <th className="p-2 text-left w-20">状态</th>
+                  <th className="p-2 text-left w-14">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {products.length === 0 ? (
-                  <tr><td colSpan={5} className="text-center py-8 text-gray-400">暂无产品，请先通过插件采集</td></tr>
+                  <tr><td colSpan={6} className="text-center py-8 text-gray-400">暂无产品，请先通过插件采集</td></tr>
                 ) : products.map(p => (
                   <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${selected.has(p.id) ? 'bg-blue-50' : ''}`}>
                     <td className="p-2">
                       <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelect(p.id)} />
                     </td>
                     <td className="p-2">
-                      {p.images?.[0]?.original_url
-                        ? <img src={p.images[0].original_url} className="w-10 h-10 object-cover rounded" />
-                        : <div className="w-10 h-10 bg-gray-100 rounded" />}
+                      {p.thumbnail ? (
+                        <div className="relative inline-block">
+                          <img
+                            src={p.thumbnail}
+                            referrerPolicy="no-referrer"
+                            className="w-11 h-11 object-cover rounded border border-gray-200 bg-gray-50"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                          />
+                          {(p.image_count || 0) > 1 && (
+                            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] leading-none rounded-full px-1.5 py-0.5">
+                              {p.image_count}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-11 h-11 bg-gray-100 rounded" />
+                      )}
                     </td>
                     <td className="p-2">
                       <span className="line-clamp-2 text-gray-800">{p.title}</span>
@@ -444,6 +505,14 @@ export function ListingPage() {
                       <span className={`px-1.5 py-0.5 rounded text-xs ${statusColors[p.status] || 'bg-gray-100 text-gray-600'}`}>
                         {p.status}
                       </span>
+                    </td>
+                    <td className="p-2">
+                      <button
+                        onClick={() => setEditingProductId(p.id)}
+                        className="text-blue-600 hover:underline text-xs"
+                      >
+                        编辑
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -477,32 +546,81 @@ export function ListingPage() {
       </div>
 
       {/* Shop Products Modal */}
-      {showShopModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowShopModal(false)}>
-          <div className="bg-white rounded-lg w-[500px] max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-800">从店铺选择参考商品</h3>
-              <button onClick={() => setShowShopModal(false)} className="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
-            </div>
-            <div className="flex-1 overflow-auto p-4">
-              {shopLoading ? (
-                <p className="text-center text-gray-400 py-8">加载中...</p>
-              ) : shopProducts.length === 0 ? (
-                <p className="text-center text-gray-400 py-8">暂无数据（店铺商品列表接口待修复）</p>
-              ) : shopProducts.map(p => (
-                <div key={p.productId} onClick={() => selectShopProduct(p)}
-                  className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded cursor-pointer border-b border-gray-100">
-                  {p.thumbUrl && <img src={p.thumbUrl} className="w-12 h-12 object-cover rounded" />}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate">{p.productName}</div>
-                    <div className="text-xs text-gray-400">ID: {p.productId}</div>
-                  </div>
+      {showShopModal && (() => {
+        const totalPages = Math.max(1, Math.ceil(shopTotal / SHOP_PAGE_SIZE));
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowShopModal(false)}>
+            <div className="bg-white rounded-lg w-[560px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <div>
+                  <h3 className="font-semibold text-gray-800">从店铺选择参考商品</h3>
+                  {shopTotal > 0 && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      共 {shopTotal} 条 · 第 {shopPage}/{totalPages} 页
+                    </p>
+                  )}
                 </div>
-              ))}
+                <button onClick={() => setShowShopModal(false)} className="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                {shopLoading ? (
+                  <p className="text-center text-gray-400 py-8">加载中...</p>
+                ) : shopProducts.length === 0 ? (
+                  <p className="text-center text-gray-400 py-8">暂无数据</p>
+                ) : shopProducts.map(p => (
+                  <div key={p.productId} onClick={() => selectShopProduct(p)}
+                    className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded cursor-pointer border-b border-gray-100">
+                    {p.thumbUrl && <img src={p.thumbUrl} className="w-12 h-12 object-cover rounded" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm truncate">{p.productName}</div>
+                      <div className="text-xs text-gray-400">
+                        {p.catName ? `${p.catName} · ` : ''}ID: {p.productId}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Pagination footer */}
+              {shopTotal > 0 && (
+                <div className="flex items-center gap-2 p-3 border-t border-gray-200 text-sm">
+                  <button
+                    onClick={() => loadShopPage(shopPage - 1)}
+                    disabled={shopLoading || shopPage <= 1}
+                    className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ← 上一页
+                  </button>
+                  <button
+                    onClick={() => loadShopPage(shopPage + 1)}
+                    disabled={shopLoading || shopPage >= totalPages}
+                    className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    下一页 →
+                  </button>
+                  <span className="ml-auto text-xs text-gray-500">跳到</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={shopJumpInput}
+                    onChange={e => setShopJumpInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleShopJump(); }}
+                    placeholder={String(shopPage)}
+                    className="w-16 px-2 py-1.5 border border-gray-300 rounded text-center"
+                  />
+                  <button
+                    onClick={handleShopJump}
+                    disabled={shopLoading}
+                    className="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40"
+                  >
+                    跳转
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Batch Edit Modal */}
       {showBatchEdit && (
@@ -522,6 +640,15 @@ export function ListingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Product Edit Modal */}
+      {editingProductId && (
+        <ProductEditModal
+          productId={editingProductId}
+          onClose={() => setEditingProductId(null)}
+          onSaved={() => { setEditingProductId(null); loadData(); }}
+        />
       )}
     </div>
   );

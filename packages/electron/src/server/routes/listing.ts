@@ -402,10 +402,12 @@ listingRouter.post('/batch-publish', async (req, res) => {
   }
 });
 
-// GET /api/listing/shop-products - List products from Temu shop
-listingRouter.get('/shop-products', async (_req, res) => {
+// GET /api/listing/shop-products?page=1&pageSize=20 - List products from Temu shop
+listingRouter.get('/shop-products', async (req, res) => {
   try {
-    const result = await getAutomation().listShopProducts();
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? '20'), 10) || 20));
+    const result = await getAutomation().listShopProducts(page, pageSize);
     res.json({ success: true, data: result });
   } catch (err) {
     res.json({ success: false, error: String(err) });

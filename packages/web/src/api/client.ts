@@ -85,7 +85,13 @@ export const api = {
       request('/listing/batch', { method: 'POST', body: JSON.stringify({ productIds, autoSubmit }) }),
     batchPublish: (productIds: string[], templateId: string) =>
       request('/listing/batch-publish', { method: 'POST', body: JSON.stringify({ productIds, templateId }) }),
-    shopProducts: () => request<any>('/listing/shop-products'),
+    shopProducts: (params?: { page?: number; pageSize?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.page) qs.set('page', String(params.page));
+      if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+      const suffix = qs.toString() ? `?${qs}` : '';
+      return request<any>(`/listing/shop-products${suffix}`);
+    },
     status: () => request('/listing/status'),
   },
 

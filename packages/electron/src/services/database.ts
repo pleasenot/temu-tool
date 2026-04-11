@@ -189,6 +189,21 @@ function createTables() {
   }
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS product_videos (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      minimax_task_id TEXT,
+      status TEXT DEFAULT 'pending',
+      duration INTEGER,
+      resolution TEXT,
+      error_msg TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_product_videos_product ON product_videos(product_id)`);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS cookies (
       domain TEXT PRIMARY KEY,
       data TEXT

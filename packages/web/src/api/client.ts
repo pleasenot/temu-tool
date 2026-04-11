@@ -46,6 +46,34 @@ export const api = {
       if (!res.ok) throw new Error('replace failed: ' + res.status);
       return res.json();
     },
+    bulkAddImage: async (productIds: string[], file: File) => {
+      const qs = new URLSearchParams({ productIds: productIds.join(',') });
+      const res = await fetch(`/api/products/bulk-add-image?${qs}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-Filename': encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+      if (!res.ok) throw new Error('bulk-add-image failed: ' + res.status);
+      return res.json();
+    },
+    bulkTitleReplace: (productIds: string[], find: string, replace: string) =>
+      request<any>('/products/bulk-title-replace', {
+        method: 'POST',
+        body: JSON.stringify({ productIds, find, replace }),
+      }),
+    bulkTitleAi: (productIds: string[]) =>
+      request<any>('/products/bulk-title-ai', {
+        method: 'POST',
+        body: JSON.stringify({ productIds }),
+      }),
+    bulkGenerateVideo: (productIds: string[], promptTemplate?: string) =>
+      request<any>('/products/bulk-generate-video', {
+        method: 'POST',
+        body: JSON.stringify({ productIds, promptTemplate }),
+      }),
   },
 
   mockup: {

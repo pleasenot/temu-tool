@@ -48,9 +48,6 @@ export interface SettingsResponse {
     port: number;
     password: string;
   };
-  minimax: {
-    apiKey: string;
-  };
   temu: {
     username: string;
     hasPassword: boolean;

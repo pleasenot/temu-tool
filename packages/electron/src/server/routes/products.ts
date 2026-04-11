@@ -4,6 +4,10 @@ import path from 'path';
 import fs from 'fs';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import { getUploadsDir } from '../../services/storage';
+import { MiniMaxClient } from '../../services/minimax-client';
+import { fetchTrendingKeywords } from '../../services/temu-keywords';
+import { enqueueVideoGeneration } from '../../services/video-task-queue';
+import { broadcastToWeb } from '../ws-server';
 import type { ApiResponse, ProductListResponse, ProductDetailResponse } from '@temu-lister/shared';
 
 const rawUpload = raw({ type: '*/*', limit: '25mb' });
@@ -30,6 +34,232 @@ function saveUploaded(buf: Buffer, filenameHint?: string): string {
 
 export const productsRouter: RouterType = Router();
 
+// POST /api/products/bulk-add-image?productIds=id1,id2,id3
+// Body: raw image bytes (same pattern as /:id/images/upload)
+// Header: X-Filename for extension hint
+// Saves the file once, then appends it to each selected product at sort_order = MAX+1.
+productsRouter.post('/bulk-add-image', rawUpload, (req, res) => {
+  const idsParam = String(req.query.productIds || '').trim();
+  const productIds = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+  if (productIds.length === 0) {
+    res.status(400).json({ success: false, error: 'productIds query param required' });
+    return;
+  }
+  const buf = req.body as Buffer;
+  if (!buf || !buf.length) {
+    res.status(400).json({ success: false, error: 'empty body' });
+    return;
+  }
+  const filename = (req.headers['x-filename'] as string) || '';
+  const url = saveUploaded(buf, filename);
+
+  const inserted: Array<{ productId: string; imageId: string }> = [];
+  for (const pid of productIds) {
+    const exists = dbGet('SELECT 1 FROM products WHERE id = ?', [pid]);
+    if (!exists) continue;
+    const max = dbGet(
+      'SELECT MAX(sort_order) as max FROM product_images WHERE product_id = ?',
+      [pid]
+    );
+    const nextOrder = (max?.max ?? -1) + 1;
+    const imageId = uuid();
+    dbRun(
+      'INSERT INTO product_images (id, product_id, original_url, sort_order) VALUES (?, ?, ?, ?)',
+      [imageId, pid, url, nextOrder]
+    );
+    inserted.push({ productId: pid, imageId });
+  }
+
+  res.json({ success: true, data: { url, inserted } });
+});
+
+// POST /api/products/bulk-title-replace
+// Body: { productIds: string[], find: string, replace: string }
+// Plain string replace (not regex); returns the before/after preview.
+productsRouter.post('/bulk-title-replace', (req, res) => {
+  const { productIds, find, replace } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    res.status(400).json({ success: false, error: 'productIds required' });
+    return;
+  }
+  if (typeof find !== 'string' || find.length === 0) {
+    res.status(400).json({ success: false, error: 'find required' });
+    return;
+  }
+  const replaceStr = typeof replace === 'string' ? replace : '';
+
+  const preview: Array<{ id: string; oldTitle: string; newTitle: string }> = [];
+  for (const pid of productIds) {
+    const row = dbGet('SELECT id, title FROM products WHERE id = ?', [pid]);
+    if (!row) continue;
+    const oldTitle = String(row.title || '');
+    if (!oldTitle.includes(find)) continue;
+    const newTitle = oldTitle.split(find).join(replaceStr);
+    if (newTitle === oldTitle) continue;
+    dbRun('UPDATE products SET title = ? WHERE id = ?', [newTitle, pid]);
+    preview.push({ id: pid, oldTitle, newTitle });
+  }
+
+  res.json({ success: true, data: { updated: preview.length, preview } });
+});
+
+// POST /api/products/bulk-title-ai
+// Body: { productIds: string[] }
+// Serially rewrites each product title via MiniMax chatCompletion.
+// Returns immediately; progress is pushed via WebSocket (title-ai:progress).
+productsRouter.post('/bulk-title-ai', async (req, res) => {
+  const { productIds } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    res.status(400).json({ success: false, error: 'productIds required' });
+    return;
+  }
+
+  // Respond immediately so the client can start listening for WS progress.
+  res.json({ success: true, data: { total: productIds.length } });
+
+  // Fire-and-forget worker. Errors per product are reported via WS, not thrown.
+  (async () => {
+    let client: MiniMaxClient;
+    try {
+      client = new MiniMaxClient();
+    } catch (err) {
+      broadcastToWeb({
+        type: 'title-ai:progress',
+        id: uuid(),
+        timestamp: Date.now(),
+        payload: {
+          current: 0,
+          total: productIds.length,
+          productId: '',
+          status: 'error',
+          error: String(err),
+        },
+      });
+      return;
+    }
+
+    for (let i = 0; i < productIds.length; i++) {
+      const pid = productIds[i];
+      const row = dbGet('SELECT id, title, category FROM products WHERE id = ?', [pid]);
+      if (!row) continue;
+      const oldTitle = String(row.title || '').slice(0, 500);
+      const category = String(row.category || '').slice(0, 100);
+
+      let keywords: string[] = [];
+      try {
+        keywords = await fetchTrendingKeywords();
+      } catch {
+        keywords = [];
+      }
+
+      const prompt =
+        `你是 Temu 跨境电商的标题优化专家。请为下面的商品生成一个更符合 Temu 英文搜索习惯的新标题：\n` +
+        `- 原标题: ${oldTitle}\n` +
+        (category ? `- 类目: ${category}\n` : '') +
+        (keywords.length ? `- 可用流量词（优先融入）: ${keywords.join(', ')}\n` : '') +
+        `要求：\n` +
+        `1. 只输出最终标题本身，不要解释、不要引号、不要任何前后缀\n` +
+        `2. 控制在 120 个英文字符以内\n` +
+        `3. 保留原商品的关键卖点（材质/尺寸/用途等）`;
+
+      try {
+        const newTitle = (await client.chatCompletion([
+          { role: 'user', content: prompt },
+        ])).slice(0, 250);
+
+        if (newTitle && newTitle !== oldTitle) {
+          dbRun('UPDATE products SET title = ? WHERE id = ?', [newTitle, pid]);
+        }
+
+        broadcastToWeb({
+          type: 'title-ai:progress',
+          id: uuid(),
+          timestamp: Date.now(),
+          payload: {
+            current: i + 1,
+            total: productIds.length,
+            productId: pid,
+            oldTitle,
+            newTitle,
+            status: 'success',
+          },
+        });
+      } catch (err) {
+        broadcastToWeb({
+          type: 'title-ai:progress',
+          id: uuid(),
+          timestamp: Date.now(),
+          payload: {
+            current: i + 1,
+            total: productIds.length,
+            productId: pid,
+            oldTitle,
+            status: 'error',
+            error: String(err),
+          },
+        });
+      }
+
+      // Soft rate-limit between calls
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  })();
+});
+
+// POST /api/products/bulk-generate-video
+// Body: { productIds: string[], promptTemplate?: string, duration?: 6|10, resolution?: '768P'|'1080P' }
+// Submits one MiniMax image-to-video task per product using its first image
+// as the first-frame. Queue worker polls + downloads + writes to uploads/videos.
+productsRouter.post('/bulk-generate-video', async (req, res) => {
+  const { productIds, promptTemplate, duration, resolution } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    res.status(400).json({ success: false, error: 'productIds required' });
+    return;
+  }
+
+  let queued = 0;
+  const errors: Array<{ productId: string; error: string }> = [];
+  for (let i = 0; i < productIds.length; i++) {
+    const pid = productIds[i];
+    const product = dbGet('SELECT id, title FROM products WHERE id = ?', [pid]);
+    if (!product) { errors.push({ productId: pid, error: 'not found' }); continue; }
+    const img = dbGet(
+      'SELECT original_url FROM product_images WHERE product_id = ? ORDER BY sort_order LIMIT 1',
+      [pid]
+    );
+    const imageUrl = img?.original_url;
+    if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
+      errors.push({ productId: pid, error: 'no usable first image' });
+      continue;
+    }
+
+    const base = (promptTemplate && String(promptTemplate).trim()) ||
+      '[Static shot] product on white background, professional lighting';
+    const title = String(product.title || '').slice(0, 120);
+    const prompt = title ? `${base}, ${title}` : base;
+
+    try {
+      await enqueueVideoGeneration({
+        productId: pid,
+        imageUrl,
+        prompt,
+        duration,
+        resolution,
+        index: i + 1,
+        total: productIds.length,
+      });
+      queued += 1;
+    } catch (err) {
+      errors.push({ productId: pid, error: String(err) });
+    }
+
+    // Soft pacing between submit calls to avoid rate limits
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
+  res.json({ success: true, data: { queued, total: productIds.length, errors } });
+});
+
 // GET /api/products - List all products (each with thumbnail)
 productsRouter.get('/', (req, res) => {
   const page = parseInt(req.query.page as string) || 1;
@@ -49,10 +279,15 @@ productsRouter.get('/', (req, res) => {
       'SELECT COUNT(*) as count FROM product_images WHERE product_id = ?',
       [p.id]
     );
+    const videoCount = dbGet(
+      "SELECT COUNT(*) as count FROM product_videos WHERE product_id = ? AND status = 'success'",
+      [p.id]
+    );
     return {
       ...mapProduct(p),
       thumbnail: thumb?.original_url || null,
       image_count: imgCount?.count || 0,
+      video_count: videoCount?.count || 0,
     };
   });
 

@@ -10,7 +10,6 @@ export function SettingsPage() {
   const [psHost, setPsHost] = useState('127.0.0.1');
   const [psPort, setPsPort] = useState('49494');
   const [psPassword, setPsPassword] = useState('');
-  const [minimaxApiKey, setMinimaxApiKey] = useState('');
   const [templatesDir, setTemplatesDir] = useState('');
   const [inputDir, setInputDir] = useState('');
   const [outputDir, setOutputDir] = useState('');
@@ -45,7 +44,6 @@ export function SettingsPage() {
       };
 
       if (psPassword) updates.ps_password = psPassword;
-      if (minimaxApiKey) updates.minimax_api_key = minimaxApiKey;
 
       await api.settings.update(updates);
       setMessage('设置已保存');
@@ -103,14 +101,7 @@ export function SettingsPage() {
         </button>
       </section>
 
-      {/* MiniMax */}
-      <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">MiniMax API</h3>
-        <label className="block text-sm text-gray-600 mb-1">API Key</label>
-        <input type="password" value={minimaxApiKey} onChange={(e) => setMinimaxApiKey(e.target.value)}
-          placeholder={settings.minimax?.apiKey ? '已设置' : '输入 MiniMax API Key'}
-          className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-      </section>
+      {/* MiniMax key now lives in packages/electron/.env (not managed via UI). */}
 
       {/* Directories */}
       <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4">

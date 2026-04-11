@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { app, Tray, Menu, nativeImage, shell } from 'electron';
 import path from 'path';
 import { startHttpServer } from './server/http-server';

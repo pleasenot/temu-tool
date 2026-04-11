@@ -27,6 +27,7 @@ interface Product {
   status: string;
   thumbnail?: string | null;
   image_count?: number;
+  video_count?: number;
 }
 
 interface ShopProduct {
@@ -72,9 +73,17 @@ export function ListingPage() {
   const [shopTotal, setShopTotal] = useState(0);
   const [shopJumpInput, setShopJumpInput] = useState('');
 
-  // Batch edit modal
+  // Batch edit modal (multi-tab)
   const [showBatchEdit, setShowBatchEdit] = useState(false);
-  const [batchTitle, setBatchTitle] = useState('');
+  const [batchTab, setBatchTab] = useState<'title' | 'image' | 'ai' | 'video'>('title');
+  const [batchFind, setBatchFind] = useState('');
+  const [batchReplace, setBatchReplace] = useState('');
+  const [batchImageFile, setBatchImageFile] = useState<File | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchMessage, setBatchMessage] = useState('');
+  const [aiProgress, setAiProgress] = useState<{ current: number; total: number; error?: string } | null>(null);
+  const [videoPrompt, setVideoPrompt] = useState('');
+  const [videoProgress, setVideoProgress] = useState<{ current: number; total: number; success: number; failed: number } | null>(null);
 
   // Product edit modal
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -94,10 +103,35 @@ export function ListingPage() {
     loadData();
     checkLogin();
     const ws = connectWebSocket((msg) => {
+      if (msg.type === 'product:new') {
+        // 新采集的商品 - 自动刷新列表
+        loadData();
+        return;
+      }
       if (msg.type === 'listing:progress') {
         setProgress(msg.payload);
         if (msg.payload.current === msg.payload.total) {
           setPublishing(false);
+          loadData();
+        }
+      }
+      if (msg.type === 'title-ai:progress') {
+        const p = msg.payload;
+        setAiProgress({ current: p.current, total: p.total, error: p.error });
+        if (p.current >= p.total) {
+          setBatchBusy(false);
+          loadData();
+        }
+      }
+      if (msg.type === 'video-gen:progress') {
+        const p = msg.payload;
+        setVideoProgress(prev => {
+          const base = prev ?? { current: 0, total: p.total, success: 0, failed: 0 };
+          const success = base.success + (p.status === 'success' ? 1 : 0);
+          const failed = base.failed + (p.status === 'failed' ? 1 : 0);
+          return { current: success + failed, total: p.total, success, failed };
+        });
+        if (p.status === 'success' || p.status === 'failed') {
           loadData();
         }
       }
@@ -238,16 +272,81 @@ export function ListingPage() {
     await api.listing.batchPublish(Array.from(selected), activeTemplateId);
   }
 
-  // ---- Batch edit ----
-  async function applyBatchEdit() {
-    for (const pid of selected) {
-      if (batchTitle.trim()) {
-        await api.products.update(pid, { title: batchTitle });
-      }
-    }
+  // ---- Batch edit (multi-tab) ----
+  function openBatchEdit() {
+    setBatchTab('title');
+    setBatchFind('');
+    setBatchReplace('');
+    setBatchImageFile(null);
+    setBatchMessage('');
+    setAiProgress(null);
+    setVideoProgress(null);
+    setVideoPrompt('');
+    setShowBatchEdit(true);
+  }
+
+  function closeBatchEdit() {
+    if (batchBusy) return;
     setShowBatchEdit(false);
-    setBatchTitle('');
-    loadData();
+  }
+
+  async function applyBatchTitleReplace() {
+    if (!batchFind) { setBatchMessage('请输入查找内容'); return; }
+    setBatchBusy(true);
+    setBatchMessage('');
+    try {
+      const res: any = await api.products.bulkTitleReplace(Array.from(selected), batchFind, batchReplace);
+      setBatchMessage(`已更新 ${res.data?.updated ?? 0} 个产品标题`);
+      loadData();
+    } catch (err) {
+      setBatchMessage(`失败: ${err}`);
+    }
+    setBatchBusy(false);
+  }
+
+  async function applyBatchAddImage() {
+    if (!batchImageFile) { setBatchMessage('请先选择图片'); return; }
+    setBatchBusy(true);
+    setBatchMessage('');
+    try {
+      const res: any = await api.products.bulkAddImage(Array.from(selected), batchImageFile);
+      setBatchMessage(`已为 ${res.data?.inserted?.length ?? 0} 个产品追加图片`);
+      loadData();
+    } catch (err) {
+      setBatchMessage(`失败: ${err}`);
+    }
+    setBatchBusy(false);
+  }
+
+  async function applyBatchTitleAi() {
+    setBatchBusy(true);
+    setBatchMessage('');
+    setAiProgress({ current: 0, total: selected.size });
+    try {
+      await api.products.bulkTitleAi(Array.from(selected));
+      // Completion is driven by WebSocket handler (title-ai:progress)
+    } catch (err) {
+      setBatchMessage(`失败: ${err}`);
+      setBatchBusy(false);
+    }
+  }
+
+  async function applyBatchGenerateVideo() {
+    setBatchBusy(true);
+    setBatchMessage('');
+    setVideoProgress({ current: 0, total: selected.size, success: 0, failed: 0 });
+    try {
+      const res: any = await api.products.bulkGenerateVideo(Array.from(selected), videoPrompt || undefined);
+      const queued = res.data?.queued ?? 0;
+      const skipped = selected.size - queued;
+      setBatchMessage(`已提交 ${queued} 个任务${skipped > 0 ? `（${skipped} 个被跳过：无可用图片）` : ''}，请在进度条中查看完成情况`);
+      // Busy state is cleared when WS reports all tasks settled (success+failed === total)
+      // Fallback timer: clear busy after (total * 90 + 30) seconds worst case
+      setTimeout(() => setBatchBusy(false), Math.max(60, selected.size * 90 + 30) * 1000);
+    } catch (err) {
+      setBatchMessage(`失败: ${err}`);
+      setBatchBusy(false);
+    }
   }
 
   const statusColors: Record<string, string> = {
@@ -416,10 +515,10 @@ export function ListingPage() {
               {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
 
-            <button onClick={() => { if (selected.size > 0) setShowBatchEdit(true); }}
+            <button onClick={() => { if (selected.size > 0) openBatchEdit(); }}
               disabled={selected.size === 0}
               className="px-3 py-2 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50">
-              批量编辑 ({selected.size})
+              批量加工 ({selected.size})
             </button>
 
             <button onClick={batchDelete}
@@ -490,6 +589,11 @@ export function ListingPage() {
                           {(p.image_count || 0) > 1 && (
                             <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] leading-none rounded-full px-1.5 py-0.5">
                               {p.image_count}
+                            </span>
+                          )}
+                          {(p.video_count || 0) > 0 && (
+                            <span className="absolute -bottom-1 -right-1 bg-purple-500 text-white text-[10px] leading-none rounded-full px-1 py-0.5" title="已生成视频">
+                              🎬
                             </span>
                           )}
                         </div>
@@ -622,21 +726,153 @@ export function ListingPage() {
         );
       })()}
 
-      {/* Batch Edit Modal */}
+      {/* Batch Edit Modal - multi-tab */}
       {showBatchEdit && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowBatchEdit(false)}>
-          <div className="bg-white rounded-lg w-96 p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-gray-800 mb-4">批量编辑 ({selected.size} 个产品)</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">统一标题（留空不改）</label>
-                <input value={batchTitle} onChange={e => setBatchTitle(e.target.value)}
-                  placeholder="输入新标题" className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-              </div>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={closeBatchEdit}>
+          <div className="bg-white rounded-lg w-[480px] p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-800 mb-3">批量加工 ({selected.size} 个产品)</h3>
+
+            {/* Tabs */}
+            <div className="flex gap-1 border-b border-gray-200 mb-4">
+              {[
+                { key: 'title', label: '📝 标题替换' },
+                { key: 'image', label: '🖼️ 批量加图' },
+                { key: 'ai', label: '🤖 AI 优化标题' },
+                { key: 'video', label: '🎬 生成视频' },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => { if (!batchBusy) { setBatchTab(t.key as any); setBatchMessage(''); } }}
+                  disabled={batchBusy}
+                  className={`px-3 py-2 text-sm border-b-2 -mb-px transition-colors ${
+                    batchTab === t.key
+                      ? 'border-blue-500 text-blue-600 font-medium'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  } disabled:opacity-50`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
-            <div className="flex gap-2 mt-4">
-              <button onClick={applyBatchEdit} className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">应用</button>
-              <button onClick={() => setShowBatchEdit(false)} className="px-4 py-2 text-sm bg-gray-300 rounded hover:bg-gray-400">取消</button>
+
+            {/* Tab body */}
+            <div className="min-h-[120px]">
+              {batchTab === 'title' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">查找</label>
+                    <input value={batchFind} onChange={e => setBatchFind(e.target.value)}
+                      placeholder="要替换的文本" className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">替换为</label>
+                    <input value={batchReplace} onChange={e => setBatchReplace(e.target.value)}
+                      placeholder="新文本（留空即删除）" className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyBatchTitleReplace} disabled={batchBusy || !batchFind}
+                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                      {batchBusy ? '处理中...' : '应用'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {batchTab === 'image' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">选择要追加的图片</label>
+                    <input type="file" accept="image/*"
+                      onChange={e => setBatchImageFile(e.target.files?.[0] || null)}
+                      className="w-full text-sm" />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    图片将追加到每个选中产品图片列表的末尾（sort_order = MAX+1）
+                  </p>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyBatchAddImage} disabled={batchBusy || !batchImageFile}
+                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                      {batchBusy ? '上传中...' : `追加到 ${selected.size} 个产品`}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {batchTab === 'ai' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-600">
+                    将对 {selected.size} 个产品调用 MiniMax 重新生成标题（抓流量词失败时退化为只用原标题优化，不阻塞）。
+                  </p>
+                  {aiProgress && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>进度</span>
+                        <span>{aiProgress.current} / {aiProgress.total}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="h-1.5 bg-blue-500 rounded-full transition-all"
+                          style={{ width: `${aiProgress.total ? (aiProgress.current / aiProgress.total) * 100 : 0}%` }} />
+                      </div>
+                      {aiProgress.error && <p className="text-xs text-red-500 mt-1">{aiProgress.error}</p>}
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyBatchTitleAi} disabled={batchBusy || selected.size === 0}
+                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                      {batchBusy ? '生成中...' : '开始'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {batchTab === 'video' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">提示词（可选）</label>
+                    <input
+                      value={videoPrompt}
+                      onChange={e => setVideoPrompt(e.target.value)}
+                      placeholder="[Static shot] product on white background, professional lighting"
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    将对 {selected.size} 个产品生成 1080P / 6s 图生视频（模型 MiniMax-Hailuo-2.3），每个约需 1-2 分钟。
+                  </p>
+                  {videoProgress && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>进度 · 成功 {videoProgress.success} · 失败 {videoProgress.failed}</span>
+                        <span>{videoProgress.current} / {videoProgress.total}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="h-1.5 bg-blue-500 rounded-full transition-all"
+                          style={{ width: `${videoProgress.total ? (videoProgress.current / videoProgress.total) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyBatchGenerateVideo} disabled={batchBusy || selected.size === 0}
+                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                      {batchBusy ? '生成中...' : '开始生成'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {batchMessage && (
+              <div className={`mt-3 p-2 rounded text-sm ${
+                batchMessage.includes('失败') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+              }`}>
+                {batchMessage}
+              </div>
+            )}
+
+            <div className="flex justify-end mt-4">
+              <button onClick={closeBatchEdit} disabled={batchBusy}
+                className="px-4 py-2 text-sm bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50">
+                关闭
+              </button>
             </div>
           </div>
         </div>

@@ -6,8 +6,9 @@ import { isEncrypted } from '../../services/encryption';
 export const settingsRouter: RouterType = Router();
 
 // GET /api/settings
-// Note: secret values (ps_password, minimax_api_key, temu_password) are
-// never returned in plaintext — only a boolean "is set" flag.
+// Note: secret values (ps_password, temu_password) are never returned
+// in plaintext — only a boolean "is set" flag. MiniMax API key lives in
+// packages/electron/.env, not in the settings table.
 settingsRouter.get('/', (_req, res) => {
   const rows = dbAll('SELECT key, value FROM settings') as Array<{ key: string; value: string }>;
 
@@ -28,9 +29,6 @@ settingsRouter.get('/', (_req, res) => {
         host: settings.ps_host || '127.0.0.1',
         port: parseInt(settings.ps_port || '49494'),
         password: hasSecret('ps_password') ? '***' : '',
-      },
-      minimax: {
-        apiKey: hasSecret('minimax_api_key') ? '***' : '',
       },
       temu: {
         username: settings.temu_username || '',

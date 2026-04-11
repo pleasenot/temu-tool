@@ -4,7 +4,6 @@ import { encrypt, decrypt, isEncrypted } from './encryption';
 // Keys whose stored value must be encrypted at rest.
 const SECURE_KEYS = new Set([
   'temu_password',
-  'minimax_api_key',
   'ps_password',
 ]);
 

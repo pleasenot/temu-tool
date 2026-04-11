@@ -1,5 +1,5 @@
-const MINIMAX_API_BASE = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.chat/v1';
-const MINIMAX_TEXT_MODEL = process.env.MINIMAX_TEXT_MODEL || 'M2.7-highspeed';
+const MINIMAX_API_BASE = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com/v1';
+const MINIMAX_TEXT_MODEL = process.env.MINIMAX_TEXT_MODEL || 'MiniMax-M2.7-highspeed';
 const MINIMAX_VIDEO_MODEL = process.env.MINIMAX_VIDEO_MODEL || 'MiniMax-Hailuo-2.3';
 
 interface ImageGenerationResult {

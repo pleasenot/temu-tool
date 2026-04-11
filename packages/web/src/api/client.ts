@@ -60,18 +60,6 @@ export const api = {
       request('/mockup/test-connection', { method: 'POST', body: JSON.stringify({ host, port, password }) }),
   },
 
-  pricing: {
-    templates: () => request('/pricing/templates'),
-    createTemplate: (data: { name: string; defaultValues: any }) =>
-      request('/pricing/templates', { method: 'POST', body: JSON.stringify(data) }),
-    updateTemplate: (id: string, data: { name: string; defaultValues: any }) =>
-      request(`/pricing/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    deleteTemplate: (id: string) =>
-      request(`/pricing/templates/${id}`, { method: 'DELETE' }),
-    apply: (templateId: string, productIds: string[]) =>
-      request('/pricing/apply', { method: 'POST', body: JSON.stringify({ templateId, productIds }) }),
-  },
-
   listing: {
     login: () => request('/listing/login', { method: 'POST' }),
     logout: () => request('/listing/logout', { method: 'POST' }),

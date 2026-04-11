@@ -4,7 +4,6 @@ import path from 'path';
 import { getUploadsDir } from '../services/storage';
 import { productsRouter } from './routes/products';
 import { mockupRouter } from './routes/mockup';
-import { pricingRouter } from './routes/pricing';
 import { listingRouter } from './routes/listing';
 import { settingsRouter } from './routes/settings';
 import { templateRouter } from './routes/templates';
@@ -21,7 +20,6 @@ export function startHttpServer(port: number): void {
   // REST API routes
   app.use('/api/products', productsRouter);
   app.use('/api/mockup', mockupRouter);
-  app.use('/api/pricing', pricingRouter);
   app.use('/api/listing', listingRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/templates', templateRouter);

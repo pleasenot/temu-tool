@@ -1,5 +1,4 @@
 import type { Product, ProductImage } from './product';
-import type { PricingTemplate, ProductPricingOverride } from './pricing';
 import type { MockupTemplate, MockupBatchConfig, MockupImage } from './mockup';
 
 // Generic API response
@@ -28,17 +27,6 @@ export interface MockupTemplateListResponse {
 
 export interface MockupBatchRequest {
   config: MockupBatchConfig;
-}
-
-// Pricing API
-export interface PricingTemplateListResponse {
-  templates: PricingTemplate[];
-}
-
-export interface ApplyPricingRequest {
-  templateId: string;
-  productIds: string[];
-  overrides?: Record<string, Partial<ProductPricingOverride>>;
 }
 
 // Listing API

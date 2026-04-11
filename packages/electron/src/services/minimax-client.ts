@@ -109,6 +109,10 @@ export class MiniMaxClient {
     duration?: 6 | 10;
     resolution?: '768P' | '1080P';
   }): Promise<{ taskId: string }> {
+    // NOTE: Minimax composes {model + duration + resolution} server-side into
+    // the actual SKU (e.g. MiniMax-Hailuo-2.3-768P-6s). The default here is
+    // 768P/6s because that's what the Max-极速版 token plan supports; 1080P
+    // requires a higher-tier plan and returns status 2061 otherwise.
     const response = await fetch(`${MINIMAX_API_BASE}/video_generation`, {
       method: 'POST',
       headers: {
@@ -120,7 +124,7 @@ export class MiniMaxClient {
         prompt: opts.prompt,
         first_frame_image: opts.imageUrl,
         duration: opts.duration ?? 6,
-        resolution: opts.resolution ?? '1080P',
+        resolution: opts.resolution ?? '768P',
       }),
     });
 

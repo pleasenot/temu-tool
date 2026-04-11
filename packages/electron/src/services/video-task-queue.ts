@@ -130,7 +130,8 @@ export async function enqueueVideoGeneration(opts: {
   startPollerOnce();
 
   const duration = opts.duration ?? 6;
-  const resolution = opts.resolution ?? '1080P';
+  // 768P is what the Max-极速版 token plan supports; 1080P needs a higher tier.
+  const resolution = opts.resolution ?? '768P';
 
   const { taskId } = await getClient().imageToVideo({
     imageUrl: opts.imageUrl,

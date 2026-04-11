@@ -343,50 +343,74 @@ export class TemuListingAutomation {
       const popup = await popupPromise;
 
       if (popup) {
-        // Step 2: Fill login form in the popup window
+        // Step 2: Fill login form in the popup window IF needed.
+        //
+        // Important: if kuajingmaihuo already has a valid session, the popup
+        // auto-SSO's and closes within a second — *before* we can fill the
+        // form. In that case we must NOT error out; the auto-close means
+        // login already succeeded. Only fill the form if the phone input
+        // actually becomes visible.
         console.log('[ensureOnAgentseller] Popup opened:', popup.url());
-        await popup.waitForLoadState('domcontentloaded');
-        await popup.waitForTimeout(2000);
+        await popup.waitForLoadState('domcontentloaded').catch(() => {});
+        await popup.waitForTimeout(1500);
 
-        const { getSetting } = await import('./secure-settings');
-        const username = getSetting('temu_username');
-        const password = getSetting('temu_password');
+        // Is the popup still open and actually showing a login form?
+        const popupAlreadyClosed = popup.isClosed();
+        if (popupAlreadyClosed) {
+          console.log('[ensureOnAgentseller] Popup closed immediately — SSO auto-completed');
+        } else {
+          const { getSetting } = await import('./secure-settings');
+          const username = getSetting('temu_username');
+          const password = getSetting('temu_password');
 
-        if (!username || !password) {
-          throw new Error('需要登录 agentseller，但无保存的凭据');
-        }
-
-        console.log('[ensureOnAgentseller] Filling login form for:', username);
-
-        try {
+          // Probe: is there actually a phone input to fill? If not, the popup
+          // is either already redirecting or closing — treat as success.
           const phoneInput = popup.locator('input[placeholder*="手机号"]').first();
-          await phoneInput.waitFor({ state: 'visible', timeout: 5000 });
-          await phoneInput.fill(username);
+          const hasForm = await phoneInput
+            .waitFor({ state: 'visible', timeout: 3000 })
+            .then(() => true)
+            .catch(() => false);
 
-          const pwdInput = popup.locator('input[placeholder*="密码"]').first();
-          await pwdInput.fill(password);
+          if (!hasForm) {
+            console.log('[ensureOnAgentseller] No form visible — popup is likely auto-SSOing');
+          } else {
+            if (!username || !password) {
+              throw new Error('需要登录 agentseller，但无保存的凭据');
+            }
+            console.log('[ensureOnAgentseller] Filling login form for:', username);
+            try {
+              await phoneInput.fill(username);
+              const pwdInput = popup.locator('input[placeholder*="密码"]').first();
+              await pwdInput.fill(password);
 
-          // Tick privacy/agreement checkbox — only click ONCE
-          try {
-            const checkbox = popup.locator('input[type="checkbox"]').first();
-            if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
-              const checked = await checkbox.isChecked().catch(() => false);
-              if (!checked) {
-                await checkbox.click();
-                console.log('[ensureOnAgentseller] Checkbox ticked via input');
+              // Tick privacy/agreement checkbox — only click ONCE
+              try {
+                const checkbox = popup.locator('input[type="checkbox"]').first();
+                if (await checkbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+                  const checked = await checkbox.isChecked().catch(() => false);
+                  if (!checked) {
+                    await checkbox.click();
+                    console.log('[ensureOnAgentseller] Checkbox ticked via input');
+                  }
+                }
+              } catch {
+                console.log('[ensureOnAgentseller] Warning: could not tick checkbox');
+              }
+
+              // Click 授权登录
+              const loginBtn = popup.locator('button:has-text("授权登录")').first();
+              await loginBtn.click();
+              console.log('[ensureOnAgentseller] Login form submitted in popup');
+            } catch (err) {
+              // If the popup closed mid-fill, that's also SSO success — don't fail.
+              if (popup.isClosed() || /closed/i.test(String(err))) {
+                console.log('[ensureOnAgentseller] Popup closed during fill — SSO likely succeeded');
+              } else {
+                console.log('[ensureOnAgentseller] Popup form fill error:', String(err));
+                throw new Error('登录表单填充失败: ' + String(err));
               }
             }
-          } catch {
-            console.log('[ensureOnAgentseller] Warning: could not tick checkbox');
           }
-
-          // Click 授权登录
-          const loginBtn = popup.locator('button:has-text("授权登录")').first();
-          await loginBtn.click();
-          console.log('[ensureOnAgentseller] Login form submitted in popup');
-        } catch (err) {
-          console.log('[ensureOnAgentseller] Popup form fill error:', String(err));
-          throw new Error('登录表单填充失败: ' + String(err));
         }
 
         // Step 3: Wait for the popup to close and main page to redirect
@@ -623,85 +647,85 @@ export class TemuListingAutomation {
   }
 
   /**
-   * List shop products by navigating to goods/list and intercepting the real API response.
-   * Returns { loggedIn: false } if not logged in.
+   * List shop products via the real agentseller API.
+   *
+   * Endpoint discovered 2026-04-11 via Chrome Network inspection on
+   * https://agentseller.temu.com/goods/list — the page fires
+   * POST /visage-agent-seller/product/skc/pageQuery after initial load.
+   *
+   * callTemuApi auto-injects anti-content so we can call it headlessly
+   * without navigating to the actual goods list page.
+   *
+   * Returns { loggedIn: false } if the session is invalid.
    */
   async listShopProducts(pageNo = 1, pageSize = 20): Promise<any> {
-    await this.init();
-    const page = this.page!;
-
-    // Intercept ALL POST responses from agentseller to find the product list API
-    let capturedItems: any[] = [];
-    let capturedTotal = 0;
-    let capturedUrl = '';
-
-    const responseHandler = async (response: any) => {
-      try {
-        const url: string = response.url();
-        if (response.request().method() !== 'POST' || !url.includes('agentseller.temu.com')) return;
-        const json = await response.json().catch(() => null);
-        if (!json?.result) return;
-        const r = json.result;
-        // Look for any response that has an array of products
-        const list = r.list || r.productList || r.goodsList || r.page_items || r.items;
-        if (Array.isArray(list) && list.length > 0 && list[0].productId) {
-          capturedItems = list;
-          capturedTotal = r.total || r.totalCount || list.length;
-          capturedUrl = url;
-        }
-      } catch {}
-    };
-
-    page.on('response', responseHandler);
     try {
-      await page.goto('https://agentseller.temu.com/goods/list', {
-        waitUntil: 'networkidle', timeout: 20000,
-      }).catch(() => {});
+      const resp = await this.callTemuApi<any>(
+        '/visage-agent-seller/product/skc/pageQuery',
+        {
+          // Field name is `page` (not `pageNumber`) — server returns
+          // `errorCode 1000002: Page number cannot be empty` otherwise.
+          page: pageNo,
+          pageSize,
+        }
+      );
 
-      // Session expired?
-      if (page.url().includes('authentication') || page.url().includes('login')) {
+      // Temu gateway returns two shapes:
+      //  - success:   { success: true, errorCode: 1000000, result: {...} }       (camelCase)
+      //  - auth-fail: { error_code: 40001, error_msg: "Invalid Login State" }    (snake_case)
+      const errorCode = resp?.errorCode ?? (resp as any)?.error_code;
+      const errorMsg = resp?.errorMsg ?? (resp as any)?.error_msg ?? '';
+
+      if (!resp?.success) {
+        // 40001 Invalid Login State / 401 / 403 — session expired
+        if (
+          errorCode === 40001 ||
+          errorCode === 403 ||
+          errorCode === 401 ||
+          /invalid login|login state|unauthorized|not logged|auth/i.test(errorMsg)
+        ) {
+          return { loggedIn: false, total: 0, list: [] };
+        }
+        throw new Error(`shop list failed: ${errorMsg || 'unknown'} (code ${errorCode ?? 'n/a'})`);
+      }
+
+      const result = resp.result || {};
+      const rawList: any[] =
+        result.data ||
+        result.list ||
+        result.pageItems ||
+        result.productList ||
+        [];
+      const total: number = result.total || result.totalItemNum || result.totalCount || rawList.length;
+
+      const list = rawList.map((item: any) => ({
+        productId: item.productId || item.productSkuId || item.goodsId || 0,
+        productName: item.productName || item.productNameEn || item.goodsName || '',
+        thumbUrl:
+          item.thumbUrl ||
+          item.mainImageUrl ||
+          item.productImgUrl ||
+          (item.productSkcImages && item.productSkcImages[0]?.imgUrl) ||
+          '',
+        catName:
+          item.leafCat?.catName ||
+          item.catName ||
+          item.leafCatName ||
+          (item.categories && item.categories[item.categories.length - 1]?.catName) ||
+          '',
+        status: item.skcStatus ?? item.status ?? item.removeStatus ?? '',
+        spuId: item.spuId || item.productId || 0,
+        categories: item.categories || null,
+      }));
+
+      return { loggedIn: true, total, list };
+    } catch (e: any) {
+      // If callTemuApi throws because ensureOnAgentseller failed -> treat as not logged in
+      if (/登录失败|not logged|authentication/i.test(e?.message || '')) {
         return { loggedIn: false, total: 0, list: [] };
       }
-      await page.waitForTimeout(3000);
-    } finally {
-      page.off('response', responseHandler);
+      throw e;
     }
-
-    if (capturedItems.length > 0) {
-      console.log(`[listShopProducts] Captured ${capturedItems.length} from ${capturedUrl}`);
-      return {
-        loggedIn: true, total: capturedTotal,
-        list: capturedItems.map((item: any) => ({
-          productId: item.productId || item.goodsId || 0,
-          productName: item.productName || item.goodsName || '',
-          thumbUrl: item.thumbUrl || item.mainImageUrl || '',
-          catName: item.leafCat?.catName || item.catName || item.leafCatName || '',
-          status: item.removeStatus ?? item.status ?? '',
-          spuId: item.spuId || item.productId || 0,
-          categories: item.categories || null,
-        })),
-      };
-    }
-
-    // Fallback: DOM extraction
-    const products = await page.evaluate(() => {
-      const results: any[] = [];
-      document.querySelectorAll('[class*=product], [class*=goods], .ant-card, tr[data-row-key]').forEach(el => {
-        const nameEl = el.querySelector('[class*=Name], [class*=title], h3, h4, td:nth-child(2)');
-        const imgEl = el.querySelector('img');
-        const key = el.getAttribute('data-row-key');
-        if (nameEl?.textContent?.trim()) {
-          results.push({
-            productId: Number(key || '0') || 0,
-            productName: nameEl.textContent.trim().substring(0, 200),
-            thumbUrl: imgEl?.src || '',
-          });
-        }
-      });
-      return results;
-    }).catch(() => []);
-
-    return { loggedIn: true, total: products.length, list: products };
   }
 
   async createListing(data: ListingData): Promise<void> {

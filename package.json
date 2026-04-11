@@ -7,12 +7,12 @@
   },
   "scripts": {
     "dev": "pnpm --parallel dev",
-    "dev:electron": "pnpm --filter electron dev",
+    "dev:electron": "pnpm --filter @temu-lister/electron dev",
     "dev:web": "pnpm --filter web dev",
     "build": "pnpm --filter shared build && pnpm --parallel --filter '!shared' build",
     "build:shared": "pnpm --filter shared build",
     "build:web": "pnpm --filter web build",
-    "build:electron": "pnpm --filter electron build",
-    "typecheck": "pnpm --filter shared exec tsc --noEmit && pnpm --filter electron exec tsc --noEmit && pnpm --filter web exec tsc --noEmit"
+    "build:electron": "pnpm --filter @temu-lister/electron build",
+    "typecheck": "pnpm --filter shared exec tsc --noEmit && pnpm --filter @temu-lister/electron exec tsc --noEmit && pnpm --filter web exec tsc --noEmit"
   }
 }

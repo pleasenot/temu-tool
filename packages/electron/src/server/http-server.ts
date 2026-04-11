@@ -7,6 +7,7 @@ import { mockupRouter } from './routes/mockup';
 import { pricingRouter } from './routes/pricing';
 import { listingRouter } from './routes/listing';
 import { settingsRouter } from './routes/settings';
+import { templateRouter } from './routes/templates';
 
 export function startHttpServer(port: number): void {
   const app = express();
@@ -23,6 +24,7 @@ export function startHttpServer(port: number): void {
   app.use('/api/pricing', pricingRouter);
   app.use('/api/listing', listingRouter);
   app.use('/api/settings', settingsRouter);
+  app.use('/api/templates', templateRouter);
 
   // Serve React SPA static files
   const webDistPath = path.resolve(__dirname, '../../../web/dist');

@@ -21,6 +21,21 @@ interface ProductImage {
   sort_order: number;
 }
 
+interface Template {
+  id: string;
+  name: string;
+  ref_product_id?: string;
+  cat_name?: string;
+  created_at?: string;
+}
+
+interface ShopProduct {
+  productId: number;
+  productName: string;
+  thumbUrl: string;
+  catName: string;
+}
+
 export function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [total, setTotal] = useState(0);
@@ -30,16 +45,90 @@ export function ProductsPage() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
+  // Template & publish state
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [publishing, setPublishing] = useState(false);
+  const [progress, setProgress] = useState<any>(null);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [shopProducts, setShopProducts] = useState<ShopProduct[]>([]);
+  const [loadingShop, setLoadingShop] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [selectedRefProduct, setSelectedRefProduct] = useState<number | null>(null);
+
   useEffect(() => {
     loadProducts();
+    loadTemplates();
     const ws = connectWebSocket((msg) => {
       if (msg.type === 'product:new') {
         showToast(`已采集：${msg.payload?.title || '新商品'}`);
         loadProducts();
       }
+      if (msg.type === 'listing:progress') {
+        setProgress(msg.payload);
+        if (msg.payload.current === msg.payload.total &&
+            (msg.payload.status === 'draft_saved' || msg.payload.status === 'error')) {
+          setPublishing(false);
+          loadProducts();
+        }
+      }
     });
     return () => { try { ws.close(); } catch {} };
   }, []);
+
+  async function loadTemplates() {
+    try {
+      const res: any = await api.templates.list();
+      setTemplates(res.data || []);
+    } catch {}
+  }
+
+  async function loadShopProducts() {
+    setLoadingShop(true);
+    try {
+      const res: any = await api.listing.shopProducts();
+      setShopProducts(res.data?.list || []);
+    } catch (e) {
+      showToast('获取店铺商品失败，请先登录');
+    }
+    setLoadingShop(false);
+  }
+
+  async function handleBatchPublish() {
+    if (selected.size === 0) { showToast('请先选择商品'); return; }
+    if (!selectedTemplate) { showToast('请先选择模板'); return; }
+    setPublishing(true);
+    setProgress(null);
+    try {
+      await api.listing.batchPublish(Array.from(selected), selectedTemplate);
+    } catch (err) {
+      showToast('发布失败: ' + String(err));
+      setPublishing(false);
+    }
+  }
+
+  async function handleCreateTemplate() {
+    if (!newTemplateName.trim()) { showToast('请输入模板名称'); return; }
+    if (!selectedRefProduct) { showToast('请选择引用商品'); return; }
+    try {
+      await api.templates.createFromProduct(newTemplateName.trim(), String(selectedRefProduct));
+      setShowCreateTemplate(false);
+      setNewTemplateName('');
+      setSelectedRefProduct(null);
+      loadTemplates();
+      showToast('模板创建成功');
+    } catch (err) {
+      showToast('创建失败: ' + String(err));
+    }
+  }
+
+  async function handleDeleteTemplate(id: string) {
+    if (!confirm('确定删除此模板？')) return;
+    await api.templates.delete(id);
+    loadTemplates();
+    if (selectedTemplate === id) setSelectedTemplate('');
+  }
 
   function showToast(text: string) {
     setToast(text);
@@ -99,28 +188,61 @@ export function ProductsPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-gray-800">产品管理</h2>
           <p className="text-sm text-gray-500 mt-1">共 {total} 个产品</p>
         </div>
-        <div className="flex gap-2">
-          {selected.size > 0 && (
-            <button
-              onClick={deleteSelected}
-              className="px-4 py-2 text-sm bg-red-500 text-white rounded hover:bg-red-600"
-            >
-              删除选中 ({selected.size})
-            </button>
-          )}
-          <button
-            onClick={loadProducts}
-            className="px-4 py-2 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50"
-          >
-            刷新
-          </button>
-        </div>
+        <button onClick={loadProducts} className="px-4 py-2 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50">
+          刷新
+        </button>
       </div>
+
+      {/* Action Bar */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap bg-white p-3 rounded-lg border border-gray-200">
+        <select value={selectedTemplate} onChange={e => setSelectedTemplate(e.target.value)}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm bg-white min-w-[160px]">
+          <option value="">-- 引用模板 --</option>
+          {templates.map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+
+        <button onClick={handleBatchPublish}
+          disabled={publishing || selected.size === 0 || !selectedTemplate}
+          className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+          {publishing ? '发布中...' : `批量发布 (${selected.size})`}
+        </button>
+
+        <button onClick={() => setShowTemplateModal(true)}
+          className="px-4 py-1.5 border border-blue-500 text-blue-600 rounded text-sm hover:bg-blue-50">
+          商品模板管理
+        </button>
+
+        {selected.size > 0 && (
+          <button onClick={deleteSelected}
+            className="px-4 py-1.5 bg-red-500 text-white rounded text-sm hover:bg-red-600 ml-auto">
+            批量删除 ({selected.size})
+          </button>
+        )}
+      </div>
+
+      {/* Progress Bar */}
+      {publishing && progress && (
+        <div className="mb-4 bg-blue-50 border border-blue-200 rounded p-3">
+          <div className="flex justify-between text-sm mb-1">
+            <span className="truncate max-w-md">{progress.productTitle}</span>
+            <span className="flex-shrink-0">{progress.current}/{progress.total}</span>
+          </div>
+          <div className="w-full bg-blue-200 rounded-full h-2">
+            <div className="bg-blue-600 h-2 rounded-full transition-all"
+              style={{ width: `${(progress.current / progress.total) * 100}%` }} />
+          </div>
+          <div className="text-xs mt-1 text-gray-500">
+            {progress.status === 'error' ? `错误: ${progress.error}` : progress.status === 'draft_saved' ? '草稿已保存' : progress.status}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-12 text-gray-500">加载中...</div>
@@ -220,6 +342,105 @@ export function ProductsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Template Manager Modal */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setShowTemplateModal(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-[750px] max-h-[85vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-bold">商品模板管理</h3>
+              <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div className="p-4">
+              <div className="flex gap-2 mb-4">
+                <button onClick={() => { setShowCreateTemplate(true); loadShopProducts(); }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                  + 新增模板
+                </button>
+              </div>
+
+              {showCreateTemplate && (
+                <div className="mb-4 p-4 border border-blue-200 rounded bg-blue-50">
+                  <div className="mb-3">
+                    <label className="text-xs text-gray-600 block mb-1">模板名称</label>
+                    <input value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)}
+                      placeholder="如：方巾、化妆包" className="border rounded px-3 py-1.5 text-sm w-full" />
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-gray-600 block mb-1">选择引用商品（从店铺已有商品中选择）</label>
+                    {loadingShop ? (
+                      <div className="text-sm text-gray-400 py-2">加载店铺商品中...</div>
+                    ) : shopProducts.length === 0 ? (
+                      <div className="text-sm text-gray-400 py-2">
+                        未获取到店铺商品。
+                        <button onClick={loadShopProducts} className="text-blue-600 hover:underline ml-1">重试</button>
+                        <span className="block text-xs mt-1">或手动输入商品 ID：</span>
+                        <input type="text" placeholder="如 6791275947"
+                          onChange={e => setSelectedRefProduct(Number(e.target.value) || null)}
+                          className="border rounded px-3 py-1.5 text-sm w-48 mt-1" />
+                      </div>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto border rounded bg-white">
+                        {shopProducts.map(sp => (
+                          <label key={sp.productId}
+                            className={`flex items-center gap-3 px-3 py-2 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 ${
+                              selectedRefProduct === sp.productId ? 'bg-blue-50' : ''
+                            }`}>
+                            <input type="radio" name="refProduct" checked={selectedRefProduct === sp.productId}
+                              onChange={() => setSelectedRefProduct(sp.productId)} />
+                            {sp.thumbUrl && <img src={sp.thumbUrl} className="w-10 h-10 object-cover rounded border" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm truncate">{sp.productName}</div>
+                              <div className="text-xs text-gray-400">{sp.catName} - ID: {sp.productId}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleCreateTemplate}
+                      className="px-4 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+                      创建
+                    </button>
+                    <button onClick={() => setShowCreateTemplate(false)}
+                      className="px-4 py-1.5 border rounded text-sm hover:bg-gray-50">
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <table className="w-full text-sm border">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left">模板名称</th>
+                    <th className="px-3 py-2 text-left">引用商品 ID</th>
+                    <th className="px-3 py-2 text-left">类目</th>
+                    <th className="px-3 py-2 text-left">创建时间</th>
+                    <th className="px-3 py-2 text-left">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.length === 0 ? (
+                    <tr><td colSpan={5} className="text-center py-6 text-gray-400">暂无模板，请点击"新增模板"创建</td></tr>
+                  ) : templates.map(t => (
+                    <tr key={t.id} className="border-t hover:bg-gray-50">
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2 text-gray-600">{t.ref_product_id || '-'}</td>
+                      <td className="px-3 py-2 text-gray-600">{t.cat_name || '-'}</td>
+                      <td className="px-3 py-2 text-gray-500 text-xs">{t.created_at ? new Date(t.created_at).toLocaleDateString('zh-CN') : '-'}</td>
+                      <td className="px-3 py-2">
+                        <button onClick={() => handleDeleteTemplate(t.id)} className="text-red-500 hover:underline text-xs">删除</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

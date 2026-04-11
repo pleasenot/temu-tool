@@ -25,3 +25,6 @@ release/
 .env.local
 credentials.json
 *.tsbuildinfo
+
+# OMC orchestration state
+.omc/

@@ -12,6 +12,7 @@
     "build": "pnpm --filter shared build && pnpm --parallel --filter '!shared' build",
     "build:shared": "pnpm --filter shared build",
     "build:web": "pnpm --filter web build",
-    "build:electron": "pnpm --filter electron build"
+    "build:electron": "pnpm --filter electron build",
+    "typecheck": "pnpm --filter shared exec tsc --noEmit && pnpm --filter electron exec tsc --noEmit && pnpm --filter web exec tsc --noEmit"
   }
 }

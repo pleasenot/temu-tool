@@ -6,6 +6,7 @@ import { PricingPage } from './components/pricing/PricingPage';
 import { ListingPage } from './components/listing/ListingPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { AccountPage } from './components/account/AccountPage';
+// CollectionPage features merged into ProductsPage
 
 export default function App() {
   return (

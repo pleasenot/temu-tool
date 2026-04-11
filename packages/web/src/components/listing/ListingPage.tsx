@@ -94,6 +94,11 @@ export function ListingPage() {
     loadData();
     checkLogin();
     const ws = connectWebSocket((msg) => {
+      if (msg.type === 'product:new') {
+        // 新采集的商品 - 自动刷新列表
+        loadData();
+        return;
+      }
       if (msg.type === 'listing:progress') {
         setProgress(msg.payload);
         if (msg.payload.current === msg.payload.total) {

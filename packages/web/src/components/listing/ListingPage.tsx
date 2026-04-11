@@ -27,6 +27,7 @@ interface Product {
   status: string;
   thumbnail?: string | null;
   image_count?: number;
+  video_count?: number;
 }
 
 interface ShopProduct {
@@ -74,13 +75,15 @@ export function ListingPage() {
 
   // Batch edit modal (multi-tab)
   const [showBatchEdit, setShowBatchEdit] = useState(false);
-  const [batchTab, setBatchTab] = useState<'title' | 'image' | 'ai'>('title');
+  const [batchTab, setBatchTab] = useState<'title' | 'image' | 'ai' | 'video'>('title');
   const [batchFind, setBatchFind] = useState('');
   const [batchReplace, setBatchReplace] = useState('');
   const [batchImageFile, setBatchImageFile] = useState<File | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchMessage, setBatchMessage] = useState('');
   const [aiProgress, setAiProgress] = useState<{ current: number; total: number; error?: string } | null>(null);
+  const [videoPrompt, setVideoPrompt] = useState('');
+  const [videoProgress, setVideoProgress] = useState<{ current: number; total: number; success: number; failed: number } | null>(null);
 
   // Product edit modal
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -117,6 +120,18 @@ export function ListingPage() {
         setAiProgress({ current: p.current, total: p.total, error: p.error });
         if (p.current >= p.total) {
           setBatchBusy(false);
+          loadData();
+        }
+      }
+      if (msg.type === 'video-gen:progress') {
+        const p = msg.payload;
+        setVideoProgress(prev => {
+          const base = prev ?? { current: 0, total: p.total, success: 0, failed: 0 };
+          const success = base.success + (p.status === 'success' ? 1 : 0);
+          const failed = base.failed + (p.status === 'failed' ? 1 : 0);
+          return { current: success + failed, total: p.total, success, failed };
+        });
+        if (p.status === 'success' || p.status === 'failed') {
           loadData();
         }
       }
@@ -265,6 +280,8 @@ export function ListingPage() {
     setBatchImageFile(null);
     setBatchMessage('');
     setAiProgress(null);
+    setVideoProgress(null);
+    setVideoPrompt('');
     setShowBatchEdit(true);
   }
 
@@ -308,6 +325,24 @@ export function ListingPage() {
     try {
       await api.products.bulkTitleAi(Array.from(selected));
       // Completion is driven by WebSocket handler (title-ai:progress)
+    } catch (err) {
+      setBatchMessage(`失败: ${err}`);
+      setBatchBusy(false);
+    }
+  }
+
+  async function applyBatchGenerateVideo() {
+    setBatchBusy(true);
+    setBatchMessage('');
+    setVideoProgress({ current: 0, total: selected.size, success: 0, failed: 0 });
+    try {
+      const res: any = await api.products.bulkGenerateVideo(Array.from(selected), videoPrompt || undefined);
+      const queued = res.data?.queued ?? 0;
+      const skipped = selected.size - queued;
+      setBatchMessage(`已提交 ${queued} 个任务${skipped > 0 ? `（${skipped} 个被跳过：无可用图片）` : ''}，请在进度条中查看完成情况`);
+      // Busy state is cleared when WS reports all tasks settled (success+failed === total)
+      // Fallback timer: clear busy after (total * 90 + 30) seconds worst case
+      setTimeout(() => setBatchBusy(false), Math.max(60, selected.size * 90 + 30) * 1000);
     } catch (err) {
       setBatchMessage(`失败: ${err}`);
       setBatchBusy(false);
@@ -556,6 +591,11 @@ export function ListingPage() {
                               {p.image_count}
                             </span>
                           )}
+                          {(p.video_count || 0) > 0 && (
+                            <span className="absolute -bottom-1 -right-1 bg-purple-500 text-white text-[10px] leading-none rounded-full px-1 py-0.5" title="已生成视频">
+                              🎬
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="w-11 h-11 bg-gray-100 rounded" />
@@ -698,6 +738,7 @@ export function ListingPage() {
                 { key: 'title', label: '📝 标题替换' },
                 { key: 'image', label: '🖼️ 批量加图' },
                 { key: 'ai', label: '🤖 AI 优化标题' },
+                { key: 'video', label: '🎬 生成视频' },
               ].map(t => (
                 <button
                   key={t.key}
@@ -779,6 +820,40 @@ export function ListingPage() {
                     <button onClick={applyBatchTitleAi} disabled={batchBusy || selected.size === 0}
                       className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
                       {batchBusy ? '生成中...' : '开始'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {batchTab === 'video' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">提示词（可选）</label>
+                    <input
+                      value={videoPrompt}
+                      onChange={e => setVideoPrompt(e.target.value)}
+                      placeholder="[Static shot] product on white background, professional lighting"
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    将对 {selected.size} 个产品生成 1080P / 6s 图生视频（模型 MiniMax-Hailuo-2.3），每个约需 1-2 分钟。
+                  </p>
+                  {videoProgress && (
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>进度 · 成功 {videoProgress.success} · 失败 {videoProgress.failed}</span>
+                        <span>{videoProgress.current} / {videoProgress.total}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="h-1.5 bg-blue-500 rounded-full transition-all"
+                          style={{ width: `${videoProgress.total ? (videoProgress.current / videoProgress.total) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={applyBatchGenerateVideo} disabled={batchBusy || selected.size === 0}
+                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                      {batchBusy ? '生成中...' : '开始生成'}
                     </button>
                   </div>
                 </div>

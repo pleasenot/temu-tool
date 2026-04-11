@@ -69,6 +69,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ productIds }),
       }),
+    bulkGenerateVideo: (productIds: string[], promptTemplate?: string) =>
+      request<any>('/products/bulk-generate-video', {
+        method: 'POST',
+        body: JSON.stringify({ productIds, promptTemplate }),
+      }),
   },
 
   mockup: {

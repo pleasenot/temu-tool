@@ -6,6 +6,7 @@ import { dbAll, dbGet, dbRun } from '../../services/database';
 import { getUploadsDir } from '../../services/storage';
 import { MiniMaxClient } from '../../services/minimax-client';
 import { fetchTrendingKeywords } from '../../services/temu-keywords';
+import { enqueueVideoGeneration } from '../../services/video-task-queue';
 import { broadcastToWeb } from '../ws-server';
 import type { ApiResponse, ProductListResponse, ProductDetailResponse } from '@temu-lister/shared';
 
@@ -205,6 +206,60 @@ productsRouter.post('/bulk-title-ai', async (req, res) => {
   })();
 });
 
+// POST /api/products/bulk-generate-video
+// Body: { productIds: string[], promptTemplate?: string, duration?: 6|10, resolution?: '768P'|'1080P' }
+// Submits one MiniMax image-to-video task per product using its first image
+// as the first-frame. Queue worker polls + downloads + writes to uploads/videos.
+productsRouter.post('/bulk-generate-video', async (req, res) => {
+  const { productIds, promptTemplate, duration, resolution } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    res.status(400).json({ success: false, error: 'productIds required' });
+    return;
+  }
+
+  let queued = 0;
+  const errors: Array<{ productId: string; error: string }> = [];
+  for (let i = 0; i < productIds.length; i++) {
+    const pid = productIds[i];
+    const product = dbGet('SELECT id, title FROM products WHERE id = ?', [pid]);
+    if (!product) { errors.push({ productId: pid, error: 'not found' }); continue; }
+    const img = dbGet(
+      'SELECT original_url FROM product_images WHERE product_id = ? ORDER BY sort_order LIMIT 1',
+      [pid]
+    );
+    const imageUrl = img?.original_url;
+    if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
+      errors.push({ productId: pid, error: 'no usable first image' });
+      continue;
+    }
+
+    const base = (promptTemplate && String(promptTemplate).trim()) ||
+      '[Static shot] product on white background, professional lighting';
+    const title = String(product.title || '').slice(0, 120);
+    const prompt = title ? `${base}, ${title}` : base;
+
+    try {
+      await enqueueVideoGeneration({
+        productId: pid,
+        imageUrl,
+        prompt,
+        duration,
+        resolution,
+        index: i + 1,
+        total: productIds.length,
+      });
+      queued += 1;
+    } catch (err) {
+      errors.push({ productId: pid, error: String(err) });
+    }
+
+    // Soft pacing between submit calls to avoid rate limits
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+
+  res.json({ success: true, data: { queued, total: productIds.length, errors } });
+});
+
 // GET /api/products - List all products (each with thumbnail)
 productsRouter.get('/', (req, res) => {
   const page = parseInt(req.query.page as string) || 1;
@@ -224,10 +279,15 @@ productsRouter.get('/', (req, res) => {
       'SELECT COUNT(*) as count FROM product_images WHERE product_id = ?',
       [p.id]
     );
+    const videoCount = dbGet(
+      "SELECT COUNT(*) as count FROM product_videos WHERE product_id = ? AND status = 'success'",
+      [p.id]
+    );
     return {
       ...mapProduct(p),
       thumbnail: thumb?.original_url || null,
       image_count: imgCount?.count || 0,
+      video_count: videoCount?.count || 0,
     };
   });
 

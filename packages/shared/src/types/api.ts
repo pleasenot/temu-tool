@@ -14,10 +14,22 @@ export interface ProductListResponse {
   total: number;
 }
 
+export interface ProductVideo {
+  id: string;
+  file_path: string;
+  status: 'processing' | 'success' | 'failed';
+  duration: number | null;
+  resolution: string | null;
+  error_msg: string | null;
+  created_at: string;
+  file_size: number | null;
+}
+
 export interface ProductDetailResponse {
   product: Product;
   images: ProductImage[];
   mockups: MockupImage[];
+  videos: ProductVideo[];
 }
 
 // Mockup API

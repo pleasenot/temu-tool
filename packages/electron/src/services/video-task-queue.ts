@@ -62,10 +62,12 @@ async function pollOnce() {
         const filename = `${entry.productId}-${entry.taskId}.mp4`;
         const filePath = path.join(getVideosDir(), filename);
         fs.writeFileSync(filePath, buf);
+        let fileSize: number | null = null;
+        try { fileSize = fs.statSync(filePath).size; } catch {}
         const publicUrl = `/uploads/videos/${filename}`;
         dbRun(
-          `UPDATE product_videos SET status = 'success', file_path = ? WHERE id = ?`,
-          [publicUrl, entry.videoRowId]
+          `UPDATE product_videos SET status = 'success', file_path = ?, file_size = ? WHERE id = ?`,
+          [publicUrl, fileSize, entry.videoRowId]
         );
         broadcastToWeb({
           type: 'video-gen:progress',

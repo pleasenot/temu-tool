@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client';
+import { WorkspacePage } from '../platform/WorkspacePage';
+import { Card } from '../ui/Card';
+import { Input } from '../ui/Input';
+import { Button } from '../ui/Button';
+import { toast } from '../ui/Toast';
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<any>({});
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
 
-  // Form state
   const [psHost, setPsHost] = useState('127.0.0.1');
   const [psPort, setPsPort] = useState('49494');
   const [psPassword, setPsPassword] = useState('');
@@ -14,11 +17,7 @@ export function SettingsPage() {
   const [inputDir, setInputDir] = useState('');
   const [outputDir, setOutputDir] = useState('');
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  async function loadSettings() {
+  const loadSettings = useCallback(async () => {
     const res: any = await api.settings.get();
     if (res.data) {
       const s = res.data;
@@ -29,11 +28,14 @@ export function SettingsPage() {
       setOutputDir(s.directories.output);
       setSettings(s);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   async function save() {
     setSaving(true);
-    setMessage('');
     try {
       const updates: Record<string, string> = {
         ps_host: psHost,
@@ -42,96 +44,128 @@ export function SettingsPage() {
         input_dir: inputDir,
         output_dir: outputDir,
       };
-
       if (psPassword) updates.ps_password = psPassword;
-
       await api.settings.update(updates);
-      setMessage('设置已保存');
+      toast.success('设置已保存');
     } catch (err) {
-      setMessage(`保存失败: ${err}`);
+      toast.error('保存失败：' + String(err));
     }
     setSaving(false);
   }
 
   async function testPsConnection() {
-    const res: any = await api.mockup.testConnection(psHost, parseInt(psPort), psPassword);
-    if (res.success) {
-      setMessage('Photoshop 连接成功！');
-    } else {
-      setMessage(`连接失败: ${res.error}`);
+    try {
+      const res: any = await api.mockup.testConnection(psHost, parseInt(psPort), psPassword);
+      if (res.success) {
+        toast.success('Photoshop 连接成功');
+      } else {
+        toast.error('连接失败：' + res.error);
+      }
+    } catch (err) {
+      toast.error('连接失败：' + String(err));
     }
   }
 
   return (
-    <div className="p-6 max-w-2xl">
-      <h2 className="text-xl font-bold text-gray-800 mb-6">设置</h2>
+    <WorkspacePage>
+      <WorkspacePage.Header
+        title="设置"
+        subtitle="Photoshop 远程连接 · 文件路径"
+        actions={
+          <Button variant="primary" onClick={save} loading={saving}>
+            保存设置
+          </Button>
+        }
+      />
 
-      {message && (
-        <div className={`mb-4 p-3 rounded text-sm ${
-          message.includes('失败') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
-        }`}>
-          {message}
+      <WorkspacePage.Content>
+        <div className="max-w-2xl mx-auto space-y-4">
+          {/* Photoshop */}
+          <Card padded>
+            <h3 className="font-display text-base text-ink-primary mb-1">Photoshop 远程连接</h3>
+            <p className="text-xs text-ink-muted mb-4">通过 PS 远程连接协议访问本地 Photoshop。</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                  主机
+                </label>
+                <Input
+                  value={psHost}
+                  onChange={(e) => setPsHost(e.target.value)}
+                  className="font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                  端口
+                </label>
+                <Input
+                  value={psPort}
+                  onChange={(e) => setPsPort(e.target.value)}
+                  className="font-mono tabular"
+                />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                密码
+              </label>
+              <Input
+                type="password"
+                value={psPassword}
+                onChange={(e) => setPsPassword(e.target.value)}
+                placeholder={settings.photoshop?.password ? '已设置' : '输入 PS 远程连接密码'}
+              />
+            </div>
+            <div className="mt-3">
+              <Button size="sm" variant="secondary" onClick={testPsConnection}>
+                测试连接
+              </Button>
+            </div>
+          </Card>
+
+          {/* Directories */}
+          <Card padded>
+            <h3 className="font-display text-base text-ink-primary mb-1">目录设置</h3>
+            <p className="text-xs text-ink-muted mb-4">PSD 模板和图片输入/输出位置。</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                  PSD 模板目录
+                </label>
+                <Input
+                  value={templatesDir}
+                  onChange={(e) => setTemplatesDir(e.target.value)}
+                  placeholder="C:\templates"
+                  className="font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                  产品图片输入目录
+                </label>
+                <Input
+                  value={inputDir}
+                  onChange={(e) => setInputDir(e.target.value)}
+                  placeholder="C:\input"
+                  className="font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+                  输出目录
+                </label>
+                <Input
+                  value={outputDir}
+                  onChange={(e) => setOutputDir(e.target.value)}
+                  placeholder="C:\output"
+                  className="font-mono"
+                />
+              </div>
+            </div>
+          </Card>
         </div>
-      )}
-
-      {/* Photoshop */}
-      <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">Photoshop 远程连接</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">主机</label>
-            <input value={psHost} onChange={(e) => setPsHost(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">端口</label>
-            <input value={psPort} onChange={(e) => setPsPort(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-        </div>
-        <div className="mt-3">
-          <label className="block text-sm text-gray-600 mb-1">密码</label>
-          <input type="password" value={psPassword} onChange={(e) => setPsPassword(e.target.value)}
-            placeholder={settings.photoshop?.password ? '已设置' : '输入 PS 远程连接密码'}
-            className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-        </div>
-        <button onClick={testPsConnection}
-          className="mt-3 px-3 py-1 text-sm bg-gray-100 border border-gray-300 rounded hover:bg-gray-200">
-          测试连接
-        </button>
-      </section>
-
-      {/* MiniMax key now lives in packages/electron/.env (not managed via UI). */}
-
-      {/* Directories */}
-      <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <h3 className="font-semibold text-gray-700 mb-3">目录设置</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">PSD 模板目录</label>
-            <input value={templatesDir} onChange={(e) => setTemplatesDir(e.target.value)}
-              placeholder="C:\templates"
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">产品图片输入目录</label>
-            <input value={inputDir} onChange={(e) => setInputDir(e.target.value)}
-              placeholder="C:\input"
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">输出目录</label>
-            <input value={outputDir} onChange={(e) => setOutputDir(e.target.value)}
-              placeholder="C:\output"
-              className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-          </div>
-        </div>
-      </section>
-
-      <button onClick={save} disabled={saving}
-        className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50">
-        {saving ? '保存中...' : '保存设置'}
-      </button>
-    </div>
+      </WorkspacePage.Content>
+    </WorkspacePage>
   );
 }

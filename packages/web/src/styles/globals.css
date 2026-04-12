@@ -2,8 +2,197 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* ── Surface ── deep navy-charcoal with subtle warmth */
+  --bg-base: #090b14;
+  --bg-raised: #0f1220;
+  --bg-card: #161a2a;
+  --bg-hover: #1c2136;
+  --bg-elevated: #232942;
+
+  /* ── Border ── cool steel with translucency */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Text ── cool silver hierarchy */
+  --text-primary: #e6eaf3;
+  --text-secondary: #8490b5;
+  --text-muted: #4a5478;
+
+  /* ── Primary accent: luminous indigo-periwinkle ── */
+  --accent-gold: #818cf8;
+  --accent-gold-soft: rgba(129, 140, 248, 0.08);
+  --accent-gold-ring: rgba(129, 140, 248, 0.25);
+  --accent-violet: #c084fc;
+
+  /* ── Status ── */
+  --status-success: #34d399;
+  --status-warn: #fbbf24;
+  --status-danger: #fb7185;
+
+  /* ── Radius ── generous for modern feel */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── Shadows ── layered with indigo tint */
+  --shadow-glow-gold: 0 0 0 1px rgba(129, 140, 248, 0.2), 0 4px 24px rgba(129, 140, 248, 0.1);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 16px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 32px 80px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.1) inset;
+
+  /* ── Fonts ── */
+  --font-display: 'Sora', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  --font-body: 'Noto Sans SC', 'Sora', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #f5f5f5;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient gradient orbs — cosmic depth */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 50%;
+  filter: blur(120px);
+}
+
+body::before {
+  top: -15%;
+  left: -10%;
+  width: 50vw;
+  height: 50vh;
+  background: radial-gradient(circle, rgba(129, 140, 248, 0.06) 0%, transparent 70%);
+}
+
+body::after {
+  bottom: -20%;
+  right: -10%;
+  width: 45vw;
+  height: 45vh;
+  background: radial-gradient(circle, rgba(192, 132, 252, 0.04) 0%, transparent 70%);
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Tabular numerics */
+.tabular,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Animations ── */
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.enter-stagger {
+  animation: enter 400ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+@keyframes pulse-gold {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--accent-gold);
+  color: var(--bg-base);
+}
+
+/* ── Scrollbar ── refined thin track */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Glass utility ── */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, #818cf8, #c084fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }

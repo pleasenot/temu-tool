@@ -74,6 +74,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ productIds, promptTemplate }),
       }),
+    deleteVideo: (productId: string, videoId: string) =>
+      request(`/products/${productId}/videos/${videoId}`, { method: 'DELETE' }),
   },
 
   mockup: {

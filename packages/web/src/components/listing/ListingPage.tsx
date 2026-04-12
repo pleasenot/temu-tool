@@ -1,6 +1,30 @@
-import { useState, useEffect, useCallback } from 'react';
-import { api, connectWebSocket } from '../../api/client';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import {
+  Plus,
+  RefreshCw,
+  Trash2,
+  Pencil,
+  Image as ImageIcon,
+  Sparkles,
+  Film,
+  Search,
+  Send,
+} from 'lucide-react';
+import { api } from '../../api/client';
 import { ProductEditModal } from '../products/ProductEditModal';
+import { ProductCard, type ProductCardProduct } from './ProductCard';
+import { BatchEditModal, type BatchTab } from './BatchEditModal';
+import { WorkspacePage } from '../platform/WorkspacePage';
+import { BatchActionBar } from '../platform/BatchActionBar';
+import { useSelection } from '../platform/useSelection';
+import { useWsEvent, type WsMessage } from '../platform/WebSocketBus';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { Modal } from '../ui/Modal';
+import { Card } from '../ui/Card';
+import { ProgressBar } from '../ui/ProgressBar';
+import { toast } from '../ui/Toast';
+import { EmptyState } from '../ui/EmptyState';
 
 interface Template {
   id: string;
@@ -19,16 +43,7 @@ interface Template {
   created_at?: string;
 }
 
-interface Product {
-  id: string;
-  title: string;
-  price?: number;
-  currency?: string;
-  status: string;
-  thumbnail?: string | null;
-  image_count?: number;
-  video_count?: number;
-}
+type Product = ProductCardProduct & { status: string };
 
 interface ShopProduct {
   productId: number;
@@ -40,32 +55,44 @@ interface ShopProduct {
 const SHOP_PAGE_SIZE = 20;
 
 const EMPTY_FORM: Omit<Template, 'id' | 'created_at'> = {
-  name: '', ref_product_id: '', size_info: '', product_code: '',
-  volume_len_cm: undefined, volume_width_cm: undefined, volume_height_cm: undefined,
-  weight_g: undefined, declared_price: undefined, retail_price: undefined, image_index: undefined,
+  name: '',
+  ref_product_id: '',
+  size_info: '',
+  product_code: '',
+  volume_len_cm: undefined,
+  volume_width_cm: undefined,
+  volume_height_cm: undefined,
+  weight_g: undefined,
+  declared_price: undefined,
+  retail_price: undefined,
+  image_index: undefined,
 };
 
 export function ListingPage() {
-  // Login state
-  const [loginStatus, setLoginStatus] = useState<{ loggedIn: boolean | null; username?: string; hasPassword?: boolean } | null>(null);
+  // Login
+  const [loginStatus, setLoginStatus] = useState<{
+    loggedIn: boolean | null;
+    username?: string;
+    hasPassword?: boolean;
+  } | null>(null);
 
   // Templates
   const [templates, setTemplates] = useState<Template[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [templateForm, setTemplateForm] = useState(EMPTY_FORM);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
-
-  // Products
-  const [products, setProducts] = useState<Product[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeTemplateId, setActiveTemplateId] = useState('');
+
+  // Products + search
+  const [products, setProducts] = useState<Product[]>([]);
+  const [search, setSearch] = useState('');
 
   // Publishing
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<any>(null);
   const [listings, setListings] = useState<any[]>([]);
 
-  // Shop products modal (with pagination)
+  // Shop products modal
   const [showShopModal, setShowShopModal] = useState(false);
   const [shopProducts, setShopProducts] = useState<ShopProduct[]>([]);
   const [shopLoading, setShopLoading] = useState(false);
@@ -73,20 +100,18 @@ export function ListingPage() {
   const [shopTotal, setShopTotal] = useState(0);
   const [shopJumpInput, setShopJumpInput] = useState('');
 
-  // Batch edit modal (multi-tab)
+  // Batch edit modal
   const [showBatchEdit, setShowBatchEdit] = useState(false);
-  const [batchTab, setBatchTab] = useState<'title' | 'image' | 'ai' | 'video'>('title');
-  const [batchFind, setBatchFind] = useState('');
-  const [batchReplace, setBatchReplace] = useState('');
-  const [batchImageFile, setBatchImageFile] = useState<File | null>(null);
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [batchMessage, setBatchMessage] = useState('');
-  const [aiProgress, setAiProgress] = useState<{ current: number; total: number; error?: string } | null>(null);
-  const [videoPrompt, setVideoPrompt] = useState('');
-  const [videoProgress, setVideoProgress] = useState<{ current: number; total: number; success: number; failed: number } | null>(null);
+  const [batchInitialTab, setBatchInitialTab] = useState<BatchTab>('title');
 
-  // Product edit modal
+  // Per-product edit modal
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+
+  // Filtered + selection
+  const filteredProducts = products.filter((p) =>
+    search ? (p.title || '').toLowerCase().includes(search.toLowerCase()) : true
+  );
+  const selection = useSelection(filteredProducts);
 
   const loadData = useCallback(async () => {
     const [tplRes, prodRes, listRes]: any[] = await Promise.all([
@@ -99,54 +124,59 @@ export function ListingPage() {
     setListings(listRes.data || []);
   }, []);
 
-  useEffect(() => {
-    loadData();
-    checkLogin();
-    const ws = connectWebSocket((msg) => {
-      if (msg.type === 'product:new') {
-        // 新采集的商品 - 自动刷新列表
-        loadData();
-        return;
-      }
-      if (msg.type === 'listing:progress') {
-        setProgress(msg.payload);
-        if (msg.payload.current === msg.payload.total) {
-          setPublishing(false);
-          loadData();
-        }
-      }
-      if (msg.type === 'title-ai:progress') {
-        const p = msg.payload;
-        setAiProgress({ current: p.current, total: p.total, error: p.error });
-        if (p.current >= p.total) {
-          setBatchBusy(false);
-          loadData();
-        }
-      }
-      if (msg.type === 'video-gen:progress') {
-        const p = msg.payload;
-        setVideoProgress(prev => {
-          const base = prev ?? { current: 0, total: p.total, success: 0, failed: 0 };
-          const success = base.success + (p.status === 'success' ? 1 : 0);
-          const failed = base.failed + (p.status === 'failed' ? 1 : 0);
-          return { current: success + failed, total: p.total, success, failed };
-        });
-        if (p.status === 'success' || p.status === 'failed') {
-          loadData();
-        }
-      }
-    });
-    return () => ws.close();
-  }, [loadData]);
-
-  async function checkLogin() {
+  const checkLogin = useCallback(async () => {
     try {
       const res: any = await api.listing.loginStatus();
       if (res.success) setLoginStatus(res.data);
     } catch {}
-  }
+  }, []);
 
-  // ---- Template CRUD ----
+  useEffect(() => {
+    loadData();
+    checkLogin();
+  }, [loadData, checkLogin]);
+
+  // ── WebSocket: refresh data on completion. Progress visualization is in TaskTray.
+  useWsEvent(
+    'product:new',
+    useCallback(() => loadData(), [loadData])
+  );
+  useWsEvent(
+    'listing:progress',
+    useCallback(
+      (msg: WsMessage) => {
+        const p = msg.payload || {};
+        setProgress(p);
+        if (p.current === p.total) {
+          setPublishing(false);
+          loadData();
+        }
+      },
+      [loadData]
+    )
+  );
+  useWsEvent(
+    'title-ai:progress',
+    useCallback(
+      (msg: WsMessage) => {
+        const p = msg.payload || {};
+        if (p.current >= p.total) loadData();
+      },
+      [loadData]
+    )
+  );
+  useWsEvent(
+    'video-gen:progress',
+    useCallback(
+      (msg: WsMessage) => {
+        const p = msg.payload || {};
+        if (p.status === 'success' || p.status === 'failed') loadData();
+      },
+      [loadData]
+    )
+  );
+
+  // ── Template CRUD
   function startNewTemplate() {
     setEditingTemplate(null);
     setTemplateForm({ ...EMPTY_FORM });
@@ -156,17 +186,26 @@ export function ListingPage() {
   function startEditTemplate(t: Template) {
     setEditingTemplate(t);
     setTemplateForm({
-      name: t.name, ref_product_id: t.ref_product_id || '',
-      size_info: t.size_info || '', product_code: t.product_code || '',
-      image_index: t.image_index, volume_len_cm: t.volume_len_cm,
-      volume_width_cm: t.volume_width_cm, volume_height_cm: t.volume_height_cm,
-      weight_g: t.weight_g, declared_price: t.declared_price, retail_price: t.retail_price,
+      name: t.name,
+      ref_product_id: t.ref_product_id || '',
+      size_info: t.size_info || '',
+      product_code: t.product_code || '',
+      image_index: t.image_index,
+      volume_len_cm: t.volume_len_cm,
+      volume_width_cm: t.volume_width_cm,
+      volume_height_cm: t.volume_height_cm,
+      weight_g: t.weight_g,
+      declared_price: t.declared_price,
+      retail_price: t.retail_price,
     });
     setIsNewTemplate(false);
   }
 
   async function saveTemplate() {
-    if (!templateForm.name) return;
+    if (!templateForm.name) {
+      toast.error('请填写模板名称');
+      return;
+    }
     const data = {
       name: templateForm.name,
       refProductId: templateForm.ref_product_id || undefined,
@@ -180,31 +219,39 @@ export function ListingPage() {
       declaredPrice: templateForm.declared_price ?? undefined,
       retailPrice: templateForm.retail_price ?? undefined,
     };
-
-    if (isNewTemplate) {
-      await api.templates.create(data as any);
-    } else if (editingTemplate) {
-      await api.templates.update(editingTemplate.id, data);
+    try {
+      if (isNewTemplate) {
+        await api.templates.create(data as any);
+      } else if (editingTemplate) {
+        await api.templates.update(editingTemplate.id, data);
+      }
+      setEditingTemplate(null);
+      setIsNewTemplate(false);
+      toast.success('模板已保存');
+      loadData();
+    } catch (e) {
+      toast.error('保存失败：' + (e as Error).message);
     }
-    setEditingTemplate(null);
-    setIsNewTemplate(false);
-    loadData();
   }
 
   async function deleteTemplate(id: string) {
     if (!confirm('确定删除此模板？')) return;
-    await api.templates.delete(id);
-    if (activeTemplateId === id) setActiveTemplateId('');
-    loadData();
+    try {
+      await api.templates.delete(id);
+      if (activeTemplateId === id) setActiveTemplateId('');
+      loadData();
+    } catch (e) {
+      toast.error('删除失败：' + (e as Error).message);
+    }
   }
 
-  // ---- Shop products modal ----
+  // ── Shop products (template ref selector)
   async function loadShopPage(page: number) {
     setShopLoading(true);
     try {
       const res: any = await api.listing.shopProducts({ page, pageSize: SHOP_PAGE_SIZE });
       if (res.data?.loggedIn === false) {
-        alert('Temu 卖家中心未登录，请先在"账号管理"页面登录后再获取店铺商品。');
+        toast.error('Temu 卖家中心未登录，请先在「账号管理」页面登录');
         setShopProducts([]);
         setShopTotal(0);
         setShowShopModal(false);
@@ -238,179 +285,190 @@ export function ListingPage() {
     loadShopPage(n);
   }
 
-  // ---- Batch delete ----
+  // ── Batch actions
   async function batchDelete() {
-    if (selected.size === 0) return;
-    if (!confirm(`确定删除选中的 ${selected.size} 个产品吗？此操作不可撤销。`)) return;
-    for (const id of selected) {
-      try { await api.products.delete(id); } catch (e) { console.error('delete failed', id, e); }
+    const ids = selection.selectedIds;
+    if (ids.length === 0) return;
+    if (!confirm(`确定删除选中的 ${ids.length} 个产品吗？此操作不可撤销。`)) return;
+    for (const id of ids) {
+      try {
+        await api.products.delete(id);
+      } catch (e) {
+        console.error('delete failed', id, e);
+      }
     }
-    setSelected(new Set());
+    selection.clear();
+    toast.success(`已删除 ${ids.length} 个产品`);
     loadData();
   }
 
-  // ---- Product selection ----
-  function toggleSelect(id: string) {
-    const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
-    setSelected(next);
-  }
-
-  function toggleSelectAll() {
-    if (selected.size === products.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(products.map(p => p.id)));
+  async function batchPublish() {
+    const ids = selection.selectedIds;
+    if (ids.length === 0 || !activeTemplateId) return;
+    setPublishing(true);
+    setProgress(null);
+    try {
+      await api.listing.batchPublish(ids, activeTemplateId);
+    } catch (e) {
+      toast.error('发布失败：' + (e as Error).message);
+      setPublishing(false);
     }
   }
 
-  // ---- Batch publish ----
-  async function batchPublish() {
-    if (selected.size === 0 || !activeTemplateId) return;
-    setPublishing(true);
-    setProgress(null);
-    await api.listing.batchPublish(Array.from(selected), activeTemplateId);
-  }
-
-  // ---- Batch edit (multi-tab) ----
-  function openBatchEdit() {
-    setBatchTab('title');
-    setBatchFind('');
-    setBatchReplace('');
-    setBatchImageFile(null);
-    setBatchMessage('');
-    setAiProgress(null);
-    setVideoProgress(null);
-    setVideoPrompt('');
+  function openBatchEdit(tab: BatchTab) {
+    if (selection.count === 0) return;
+    setBatchInitialTab(tab);
     setShowBatchEdit(true);
   }
 
-  function closeBatchEdit() {
-    if (batchBusy) return;
-    setShowBatchEdit(false);
-  }
+  const isEditingTemplate = isNewTemplate || editingTemplate !== null;
+  const totalShopPages = Math.max(1, Math.ceil(shopTotal / SHOP_PAGE_SIZE));
 
-  async function applyBatchTitleReplace() {
-    if (!batchFind) { setBatchMessage('请输入查找内容'); return; }
-    setBatchBusy(true);
-    setBatchMessage('');
-    try {
-      const res: any = await api.products.bulkTitleReplace(Array.from(selected), batchFind, batchReplace);
-      setBatchMessage(`已更新 ${res.data?.updated ?? 0} 个产品标题`);
-      loadData();
-    } catch (err) {
-      setBatchMessage(`失败: ${err}`);
-    }
-    setBatchBusy(false);
-  }
+  const batchActions = [
+    { id: 'title', label: '标题替换', icon: <Pencil size={14} />, onClick: () => openBatchEdit('title') },
+    { id: 'image', label: '批量加图', icon: <ImageIcon size={14} />, onClick: () => openBatchEdit('image') },
+    { id: 'ai', label: 'AI 标题', icon: <Sparkles size={14} />, onClick: () => openBatchEdit('ai') },
+    { id: 'video', label: '生成视频', icon: <Film size={14} />, onClick: () => openBatchEdit('video') },
+    { id: 'delete', label: '删除', icon: <Trash2 size={14} />, onClick: batchDelete },
+    {
+      id: 'publish',
+      label: publishing ? '发布中...' : '发布',
+      icon: <Send size={14} />,
+      primary: true,
+      disabled: publishing || !activeTemplateId,
+      onClick: batchPublish,
+    },
+  ];
 
-  async function applyBatchAddImage() {
-    if (!batchImageFile) { setBatchMessage('请先选择图片'); return; }
-    setBatchBusy(true);
-    setBatchMessage('');
-    try {
-      const res: any = await api.products.bulkAddImage(Array.from(selected), batchImageFile);
-      setBatchMessage(`已为 ${res.data?.inserted?.length ?? 0} 个产品追加图片`);
-      loadData();
-    } catch (err) {
-      setBatchMessage(`失败: ${err}`);
-    }
-    setBatchBusy(false);
-  }
-
-  async function applyBatchTitleAi() {
-    setBatchBusy(true);
-    setBatchMessage('');
-    setAiProgress({ current: 0, total: selected.size });
-    try {
-      await api.products.bulkTitleAi(Array.from(selected));
-      // Completion is driven by WebSocket handler (title-ai:progress)
-    } catch (err) {
-      setBatchMessage(`失败: ${err}`);
-      setBatchBusy(false);
-    }
-  }
-
-  async function applyBatchGenerateVideo() {
-    setBatchBusy(true);
-    setBatchMessage('');
-    setVideoProgress({ current: 0, total: selected.size, success: 0, failed: 0 });
-    try {
-      const res: any = await api.products.bulkGenerateVideo(Array.from(selected), videoPrompt || undefined);
-      const queued = res.data?.queued ?? 0;
-      const skipped = selected.size - queued;
-      setBatchMessage(`已提交 ${queued} 个任务${skipped > 0 ? `（${skipped} 个被跳过：无可用图片）` : ''}，请在进度条中查看完成情况`);
-      // Busy state is cleared when WS reports all tasks settled (success+failed === total)
-      // Fallback timer: clear busy after (total * 90 + 30) seconds worst case
-      setTimeout(() => setBatchBusy(false), Math.max(60, selected.size * 90 + 30) * 1000);
-    } catch (err) {
-      setBatchMessage(`失败: ${err}`);
-      setBatchBusy(false);
-    }
-  }
-
-  const statusColors: Record<string, string> = {
-    collected: 'bg-gray-100 text-gray-600',
-    processing: 'bg-yellow-100 text-yellow-700',
-    mockup_ready: 'bg-blue-100 text-blue-700',
-    priced: 'bg-purple-100 text-purple-700',
-    listed: 'bg-green-100 text-green-700',
-    error: 'bg-red-100 text-red-700',
-  };
-
-  const isEditing = isNewTemplate || editingTemplate !== null;
+  const loginText =
+    loginStatus === null
+      ? '检查中...'
+      : loginStatus.loggedIn === true
+      ? `已登录 ${loginStatus.username || ''}`
+      : loginStatus.loggedIn === false
+      ? '未登录'
+      : loginStatus.hasPassword
+      ? `${loginStatus.username || ''} (待连接)`
+      : '未配置账号';
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-gray-800">自动上品</h2>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${loginStatus?.loggedIn === true ? 'bg-green-500' : loginStatus?.loggedIn === false ? 'bg-red-400' : 'bg-yellow-400'}`} />
-            <span className="text-sm text-gray-600">
-              {loginStatus === null ? '检查中...'
-                : loginStatus.loggedIn === true ? `已登录 ${loginStatus.username || ''}`
-                : loginStatus.loggedIn === false ? '未登录'
-                : loginStatus.hasPassword ? `${loginStatus.username || ''} (待连接)` : '未配置账号'}
-            </span>
-          </div>
-          <button onClick={checkLogin} className="px-2 py-1 text-xs bg-gray-100 border border-gray-300 rounded hover:bg-gray-200">
-            刷新
-          </button>
-        </div>
-      </div>
+    <WorkspacePage>
+      <WorkspacePage.Header
+        title="自动上品"
+        subtitle={`${products.length} products · ${selection.count} selected`}
+        actions={
+          <>
+            <div className="flex items-center gap-2 mr-2">
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  loginStatus?.loggedIn === true
+                    ? 'bg-status-success animate-pulse'
+                    : loginStatus?.loggedIn === false
+                    ? 'bg-status-danger'
+                    : 'bg-status-warn'
+                }`}
+              />
+              <span className="font-mono text-[10px] text-ink-secondary">{loginText}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                checkLogin();
+                loadData();
+              }}
+              leftIcon={<RefreshCw size={14} />}
+            >
+              刷新
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex gap-6 flex-1 min-h-0">
-        {/* Left: Template Management */}
-        <div className="w-80 flex-shrink-0 flex flex-col">
-          <div className="bg-white rounded-lg border border-gray-200 flex-1 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-3 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-700 text-sm">上品模板</h3>
-              <button onClick={startNewTemplate} className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600">
-                + 新建
-              </button>
+      <WorkspacePage.Toolbar>
+        <div className="relative flex-1 max-w-sm">
+          <Search
+            size={14}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none"
+          />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索产品标题..."
+            className="pl-8"
+          />
+        </div>
+        <select
+          value={activeTemplateId}
+          onChange={(e) => setActiveTemplateId(e.target.value)}
+          className="h-9 px-3 bg-surface-card border border-edge rounded-md text-sm text-ink-primary focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold-ring"
+        >
+          <option value="">— 选择上品模板 —</option>
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        {!activeTemplateId && selection.count > 0 && (
+          <span className="text-xs font-mono text-status-warn">请先选择模板</span>
+        )}
+      </WorkspacePage.Toolbar>
+
+      <WorkspacePage.Content>
+        <div className="flex gap-6 h-full min-h-0">
+          {/* Templates panel — left */}
+          <Card className="w-72 shrink-0 flex flex-col overflow-hidden p-0">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-edge-subtle">
+              <h3 className="font-display text-sm text-ink-primary">上品模板</h3>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={startNewTemplate}
+                leftIcon={<Plus size={12} />}
+              >
+                新建
+              </Button>
             </div>
 
-            {/* Template list */}
-            <div className="flex-1 overflow-auto">
-              {templates.length === 0 && !isEditing && (
-                <p className="p-4 text-sm text-gray-400 text-center">暂无模板</p>
+            <div className="flex-1 overflow-y-auto">
+              {templates.length === 0 && !isEditingTemplate && (
+                <p className="p-4 text-xs text-ink-muted text-center">暂无模板</p>
               )}
-              {templates.map(t => (
+              {templates.map((t) => (
                 <div
                   key={t.id}
-                  className={`p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${activeTemplateId === t.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
+                  className={`p-3 border-b border-edge-subtle cursor-pointer transition-colors ${
+                    activeTemplateId === t.id
+                      ? 'bg-gold-soft border-l-2 border-l-gold'
+                      : 'hover:bg-surface-hover'
+                  }`}
                   onClick={() => setActiveTemplateId(t.id)}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium truncate">{t.name}</span>
-                    <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={(e) => { e.stopPropagation(); startEditTemplate(t); }} className="text-xs text-blue-500 hover:text-blue-700">编辑</button>
-                      <button onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id); }} className="text-xs text-red-500 hover:text-red-700">删除</button>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-ink-primary truncate">{t.name}</span>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditTemplate(t);
+                        }}
+                        className="text-[11px] font-mono text-ink-secondary hover:text-gold"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteTemplate(t.id);
+                        }}
+                        className="text-[11px] font-mono text-ink-secondary hover:text-status-danger"
+                      >
+                        删除
+                      </button>
                     </div>
                   </div>
-                  <div className="text-xs text-gray-400 mt-1 space-x-2">
+                  <div className="text-[10px] font-mono text-ink-muted mt-1 space-x-2 tabular">
                     {t.ref_product_id && <span>参考:{t.ref_product_id}</span>}
                     {t.declared_price && <span>{t.declared_price}元</span>}
                     {t.weight_g && <span>{t.weight_g}g</span>}
@@ -419,473 +477,365 @@ export function ListingPage() {
               ))}
             </div>
 
-            {/* Template form */}
-            {isEditing && (
-              <div className="border-t border-gray-200 p-3 bg-gray-50 overflow-auto max-h-96">
-                <h4 className="text-sm font-semibold text-gray-700 mb-2">{isNewTemplate ? '新建模板' : '编辑模板'}</h4>
+            {isEditingTemplate && (
+              <div className="border-t border-edge-subtle p-3 bg-surface-base/40 overflow-y-auto max-h-[60vh]">
+                <h4 className="text-[10px] font-mono text-ink-secondary mb-2 uppercase tracking-widest">
+                  {isNewTemplate ? '新建模板' : '编辑模板'}
+                </h4>
                 <div className="space-y-2">
-                  <input placeholder="模板名称 *" value={templateForm.name}
-                    onChange={e => setTemplateForm({ ...templateForm, name: e.target.value })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-
-                  <div className="flex gap-1">
-                    <input placeholder="参考商品 ID" value={templateForm.ref_product_id || ''}
-                      onChange={e => setTemplateForm({ ...templateForm, ref_product_id: e.target.value })}
-                      className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    <button onClick={openShopModal} className="px-2 py-1.5 text-xs bg-gray-200 rounded hover:bg-gray-300 whitespace-nowrap">
+                  <Input
+                    placeholder="模板名称 *"
+                    value={templateForm.name}
+                    onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                  />
+                  <div className="flex gap-1.5">
+                    <Input
+                      placeholder="参考商品 ID"
+                      value={templateForm.ref_product_id || ''}
+                      onChange={(e) =>
+                        setTemplateForm({ ...templateForm, ref_product_id: e.target.value })
+                      }
+                      className="flex-1"
+                    />
+                    <Button size="sm" variant="secondary" onClick={openShopModal}>
                       从店铺选
-                    </button>
+                    </Button>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">尺码</label>
-                      <input placeholder="S/M/L/XL" value={templateForm.size_info || ''}
-                        onChange={e => setTemplateForm({ ...templateForm, size_info: e.target.value })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">货号</label>
-                      <input placeholder="产品货号" value={templateForm.product_code || ''}
-                        onChange={e => setTemplateForm({ ...templateForm, product_code: e.target.value })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">图片序号</label>
-                      <input type="number" placeholder="1" value={templateForm.image_index ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, image_index: e.target.value ? Number(e.target.value) : undefined })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">重量(g)</label>
-                      <input type="number" placeholder="100" value={templateForm.weight_g ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, weight_g: e.target.value ? Number(e.target.value) : undefined })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
+                    <FormField label="尺码">
+                      <Input
+                        placeholder="S/M/L/XL"
+                        value={templateForm.size_info || ''}
+                        onChange={(e) =>
+                          setTemplateForm({ ...templateForm, size_info: e.target.value })
+                        }
+                      />
+                    </FormField>
+                    <FormField label="货号">
+                      <Input
+                        placeholder="产品货号"
+                        value={templateForm.product_code || ''}
+                        onChange={(e) =>
+                          setTemplateForm({ ...templateForm, product_code: e.target.value })
+                        }
+                      />
+                    </FormField>
+                    <FormField label="图片序号">
+                      <Input
+                        type="number"
+                        placeholder="1"
+                        value={templateForm.image_index ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            image_index: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                    </FormField>
+                    <FormField label="重量(g)">
+                      <Input
+                        type="number"
+                        placeholder="100"
+                        value={templateForm.weight_g ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            weight_g: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                    </FormField>
                   </div>
 
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-0.5">包装体积 (cm)</label>
-                    <div className="flex gap-1">
-                      <input type="number" placeholder="长" value={templateForm.volume_len_cm ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, volume_len_cm: e.target.value ? Number(e.target.value) : undefined })}
-                        className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                      <input type="number" placeholder="宽" value={templateForm.volume_width_cm ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, volume_width_cm: e.target.value ? Number(e.target.value) : undefined })}
-                        className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                      <input type="number" placeholder="高" value={templateForm.volume_height_cm ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, volume_height_cm: e.target.value ? Number(e.target.value) : undefined })}
-                        className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm" />
+                  <FormField label="包装体积 (cm)">
+                    <div className="flex gap-1.5">
+                      <Input
+                        type="number"
+                        placeholder="长"
+                        value={templateForm.volume_len_cm ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            volume_len_cm: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                      <Input
+                        type="number"
+                        placeholder="宽"
+                        value={templateForm.volume_width_cm ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            volume_width_cm: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                      <Input
+                        type="number"
+                        placeholder="高"
+                        value={templateForm.volume_height_cm ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            volume_height_cm: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
                     </div>
-                  </div>
+                  </FormField>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">申报价(元)</label>
-                      <input type="number" step="0.01" placeholder="25.00" value={templateForm.declared_price ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, declared_price: e.target.value ? Number(e.target.value) : undefined })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-0.5">建议零售价(元)</label>
-                      <input type="number" step="0.01" placeholder="39.90" value={templateForm.retail_price ?? ''}
-                        onChange={e => setTemplateForm({ ...templateForm, retail_price: e.target.value ? Number(e.target.value) : undefined })}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
-                    </div>
+                    <FormField label="申报价(元)">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="25.00"
+                        value={templateForm.declared_price ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            declared_price: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                    </FormField>
+                    <FormField label="建议零售价(元)">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="39.90"
+                        value={templateForm.retail_price ?? ''}
+                        onChange={(e) =>
+                          setTemplateForm({
+                            ...templateForm,
+                            retail_price: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                      />
+                    </FormField>
                   </div>
 
                   <div className="flex gap-2 pt-1">
-                    <button onClick={saveTemplate} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">保存</button>
-                    <button onClick={() => { setEditingTemplate(null); setIsNewTemplate(false); }}
-                      className="px-3 py-1.5 text-sm bg-gray-300 rounded hover:bg-gray-400">取消</button>
+                    <Button size="sm" variant="primary" onClick={saveTemplate}>
+                      保存
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingTemplate(null);
+                        setIsNewTemplate(false);
+                      }}
+                    >
+                      取消
+                    </Button>
                   </div>
                 </div>
               </div>
             )}
-          </div>
-        </div>
+          </Card>
 
-        {/* Right: Products + Actions */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* Action bar */}
-          <div className="flex items-center gap-3 mb-3">
-            <select value={activeTemplateId} onChange={e => setActiveTemplateId(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded text-sm bg-white">
-              <option value="">-- 选择模板 --</option>
-              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+          {/* Right: products + listings */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            {progress && (
+              <Card padded className="mb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm text-ink-primary truncate">{progress.productTitle}</span>
+                  <span className="font-mono text-[11px] text-ink-secondary tabular">
+                    {progress.current}/{progress.total}
+                  </span>
+                </div>
+                <ProgressBar
+                  value={progress.total ? (progress.current / progress.total) * 100 : 0}
+                />
+                {progress.error && (
+                  <p className="text-xs text-status-danger mt-1.5">{progress.error}</p>
+                )}
+              </Card>
+            )}
 
-            <button onClick={() => { if (selected.size > 0) openBatchEdit(); }}
-              disabled={selected.size === 0}
-              className="px-3 py-2 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50">
-              批量加工 ({selected.size})
-            </button>
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1">
+              {filteredProducts.length === 0 ? (
+                <EmptyState
+                  title="暂无产品"
+                  description="先在 Temu 商品页用插件采集，新商品会自动出现在这里"
+                />
+              ) : (
+                <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 pb-2">
+                  {filteredProducts.map((p, i) => (
+                    <ProductCard
+                      key={p.id}
+                      product={p}
+                      selected={selection.isSelected(p.id)}
+                      onToggle={() => selection.toggle(p.id)}
+                      onEdit={() => setEditingProductId(p.id)}
+                      index={i}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
 
-            <button onClick={batchDelete}
-              disabled={selected.size === 0}
-              className="px-3 py-2 text-sm bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 disabled:opacity-50">
-              批量删除 ({selected.size})
-            </button>
-
-            <button onClick={batchPublish}
-              disabled={publishing || selected.size === 0 || !activeTemplateId}
-              className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-              {publishing ? '发布中...' : `批量发布 (${selected.size})`}
-            </button>
-
-            {!activeTemplateId && selected.size > 0 && (
-              <span className="text-xs text-orange-500">请先选择模板</span>
+            {listings.length > 0 && (
+              <Card className="mt-3 max-h-40 overflow-auto p-0">
+                <div className="text-[10px] font-mono text-ink-secondary p-2 border-b border-edge-subtle uppercase tracking-widest">
+                  上品记录
+                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {listings.slice(0, 10).map((l: any) => (
+                      <tr key={l.id} className="border-b border-edge-subtle">
+                        <td className="p-2 truncate max-w-xs text-ink-primary">
+                          {l.product_title || l.product_id}
+                        </td>
+                        <td className="p-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                              l.status === 'draft_saved'
+                                ? 'bg-status-success/15 text-status-success'
+                                : l.status === 'error'
+                                ? 'bg-status-danger/15 text-status-danger'
+                                : 'bg-surface-hover text-ink-secondary'
+                            }`}
+                          >
+                            {l.status}
+                          </span>
+                        </td>
+                        <td className="p-2 text-ink-muted font-mono text-[10px] tabular">
+                          {l.submitted_at ? new Date(l.submitted_at).toLocaleString('zh-CN') : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
             )}
           </div>
-
-          {/* Progress */}
-          {progress && (
-            <div className="mb-3 bg-white rounded-lg border border-gray-200 p-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium truncate">{progress.productTitle}</span>
-                <span className="text-xs text-gray-500">{progress.current}/{progress.total}</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-1.5">
-                <div className={`h-1.5 rounded-full transition-all ${progress.status === 'error' ? 'bg-red-500' : 'bg-blue-500'}`}
-                  style={{ width: `${(progress.current / progress.total) * 100}%` }} />
-              </div>
-              {progress.error && <p className="text-xs text-red-500 mt-1">{progress.error}</p>}
-            </div>
-          )}
-
-          {/* Product table */}
-          <div className="bg-white rounded-lg border border-gray-200 flex-1 overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-50 z-10">
-                <tr className="text-gray-500 border-b border-gray-200">
-                  <th className="p-2 text-left w-8">
-                    <input type="checkbox" checked={selected.size === products.length && products.length > 0}
-                      onChange={toggleSelectAll} />
-                  </th>
-                  <th className="p-2 text-left w-14">图片</th>
-                  <th className="p-2 text-left">标题</th>
-                  <th className="p-2 text-left w-20">价格</th>
-                  <th className="p-2 text-left w-20">状态</th>
-                  <th className="p-2 text-left w-14">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center py-8 text-gray-400">暂无产品，请先通过插件采集</td></tr>
-                ) : products.map(p => (
-                  <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${selected.has(p.id) ? 'bg-blue-50' : ''}`}>
-                    <td className="p-2">
-                      <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelect(p.id)} />
-                    </td>
-                    <td className="p-2">
-                      {p.thumbnail ? (
-                        <div className="relative inline-block">
-                          <img
-                            src={p.thumbnail}
-                            referrerPolicy="no-referrer"
-                            className="w-11 h-11 object-cover rounded border border-gray-200 bg-gray-50"
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                          />
-                          {(p.image_count || 0) > 1 && (
-                            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] leading-none rounded-full px-1.5 py-0.5">
-                              {p.image_count}
-                            </span>
-                          )}
-                          {(p.video_count || 0) > 0 && (
-                            <span className="absolute -bottom-1 -right-1 bg-purple-500 text-white text-[10px] leading-none rounded-full px-1 py-0.5" title="已生成视频">
-                              🎬
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="w-11 h-11 bg-gray-100 rounded" />
-                      )}
-                    </td>
-                    <td className="p-2">
-                      <span className="line-clamp-2 text-gray-800">{p.title}</span>
-                    </td>
-                    <td className="p-2 text-gray-600">{p.price ? `${p.currency || '$'}${p.price}` : '-'}</td>
-                    <td className="p-2">
-                      <span className={`px-1.5 py-0.5 rounded text-xs ${statusColors[p.status] || 'bg-gray-100 text-gray-600'}`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="p-2">
-                      <button
-                        onClick={() => setEditingProductId(p.id)}
-                        className="text-blue-600 hover:underline text-xs"
-                      >
-                        编辑
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Listing history */}
-          {listings.length > 0 && (
-            <div className="mt-3 bg-white rounded-lg border border-gray-200 max-h-40 overflow-auto">
-              <h4 className="text-xs font-semibold text-gray-500 p-2 border-b border-gray-100">上品记录</h4>
-              <table className="w-full text-xs">
-                <tbody>
-                  {listings.slice(0, 10).map((l: any) => (
-                    <tr key={l.id} className="border-b border-gray-50">
-                      <td className="p-2 truncate max-w-xs">{l.product_title || l.product_id}</td>
-                      <td className="p-2">
-                        <span className={`px-1.5 py-0.5 rounded ${
-                          l.status === 'draft_saved' ? 'bg-green-100 text-green-700' :
-                          l.status === 'error' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-                        }`}>{l.status}</span>
-                      </td>
-                      <td className="p-2 text-gray-400">{l.submitted_at ? new Date(l.submitted_at).toLocaleString('zh-CN') : ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
-      </div>
+      </WorkspacePage.Content>
+
+      <WorkspacePage.Footer>
+        <BatchActionBar count={selection.count} actions={batchActions} onClear={selection.clear} />
+      </WorkspacePage.Footer>
 
       {/* Shop Products Modal */}
-      {showShopModal && (() => {
-        const totalPages = Math.max(1, Math.ceil(shopTotal / SHOP_PAGE_SIZE));
-        return (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowShopModal(false)}>
-            <div className="bg-white rounded-lg w-[560px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                <div>
-                  <h3 className="font-semibold text-gray-800">从店铺选择参考商品</h3>
-                  {shopTotal > 0 && (
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      共 {shopTotal} 条 · 第 {shopPage}/{totalPages} 页
-                    </p>
-                  )}
-                </div>
-                <button onClick={() => setShowShopModal(false)} className="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
-              </div>
-              <div className="flex-1 overflow-auto p-4">
-                {shopLoading ? (
-                  <p className="text-center text-gray-400 py-8">加载中...</p>
-                ) : shopProducts.length === 0 ? (
-                  <p className="text-center text-gray-400 py-8">暂无数据</p>
-                ) : shopProducts.map(p => (
-                  <div key={p.productId} onClick={() => selectShopProduct(p)}
-                    className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded cursor-pointer border-b border-gray-100">
-                    {p.thumbUrl && <img src={p.thumbUrl} className="w-12 h-12 object-cover rounded" />}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate">{p.productName}</div>
-                      <div className="text-xs text-gray-400">
-                        {p.catName ? `${p.catName} · ` : ''}ID: {p.productId}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {/* Pagination footer */}
-              {shopTotal > 0 && (
-                <div className="flex items-center gap-2 p-3 border-t border-gray-200 text-sm">
-                  <button
-                    onClick={() => loadShopPage(shopPage - 1)}
-                    disabled={shopLoading || shopPage <= 1}
-                    className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    ← 上一页
-                  </button>
-                  <button
-                    onClick={() => loadShopPage(shopPage + 1)}
-                    disabled={shopLoading || shopPage >= totalPages}
-                    className="px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    下一页 →
-                  </button>
-                  <span className="ml-auto text-xs text-gray-500">跳到</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={totalPages}
-                    value={shopJumpInput}
-                    onChange={e => setShopJumpInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleShopJump(); }}
-                    placeholder={String(shopPage)}
-                    className="w-16 px-2 py-1.5 border border-gray-300 rounded text-center"
-                  />
-                  <button
-                    onClick={handleShopJump}
-                    disabled={shopLoading}
-                    className="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40"
-                  >
-                    跳转
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Batch Edit Modal - multi-tab */}
-      {showBatchEdit && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={closeBatchEdit}>
-          <div className="bg-white rounded-lg w-[480px] p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-gray-800 mb-3">批量加工 ({selected.size} 个产品)</h3>
-
-            {/* Tabs */}
-            <div className="flex gap-1 border-b border-gray-200 mb-4">
-              {[
-                { key: 'title', label: '📝 标题替换' },
-                { key: 'image', label: '🖼️ 批量加图' },
-                { key: 'ai', label: '🤖 AI 优化标题' },
-                { key: 'video', label: '🎬 生成视频' },
-              ].map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => { if (!batchBusy) { setBatchTab(t.key as any); setBatchMessage(''); } }}
-                  disabled={batchBusy}
-                  className={`px-3 py-2 text-sm border-b-2 -mb-px transition-colors ${
-                    batchTab === t.key
-                      ? 'border-blue-500 text-blue-600 font-medium'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  } disabled:opacity-50`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Tab body */}
-            <div className="min-h-[120px]">
-              {batchTab === 'title' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">查找</label>
-                    <input value={batchFind} onChange={e => setBatchFind(e.target.value)}
-                      placeholder="要替换的文本" className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">替换为</label>
-                    <input value={batchReplace} onChange={e => setBatchReplace(e.target.value)}
-                      placeholder="新文本（留空即删除）" className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button onClick={applyBatchTitleReplace} disabled={batchBusy || !batchFind}
-                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-                      {batchBusy ? '处理中...' : '应用'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {batchTab === 'image' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">选择要追加的图片</label>
-                    <input type="file" accept="image/*"
-                      onChange={e => setBatchImageFile(e.target.files?.[0] || null)}
-                      className="w-full text-sm" />
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    图片将追加到每个选中产品图片列表的末尾（sort_order = MAX+1）
-                  </p>
-                  <div className="flex gap-2 pt-1">
-                    <button onClick={applyBatchAddImage} disabled={batchBusy || !batchImageFile}
-                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-                      {batchBusy ? '上传中...' : `追加到 ${selected.size} 个产品`}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {batchTab === 'ai' && (
-                <div className="space-y-3">
-                  <p className="text-sm text-gray-600">
-                    将对 {selected.size} 个产品调用 MiniMax 重新生成标题（抓流量词失败时退化为只用原标题优化，不阻塞）。
-                  </p>
-                  {aiProgress && (
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                        <span>进度</span>
-                        <span>{aiProgress.current} / {aiProgress.total}</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div className="h-1.5 bg-blue-500 rounded-full transition-all"
-                          style={{ width: `${aiProgress.total ? (aiProgress.current / aiProgress.total) * 100 : 0}%` }} />
-                      </div>
-                      {aiProgress.error && <p className="text-xs text-red-500 mt-1">{aiProgress.error}</p>}
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <button onClick={applyBatchTitleAi} disabled={batchBusy || selected.size === 0}
-                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-                      {batchBusy ? '生成中...' : '开始'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {batchTab === 'video' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">提示词（可选）</label>
-                    <input
-                      value={videoPrompt}
-                      onChange={e => setVideoPrompt(e.target.value)}
-                      placeholder="[Static shot] product on white background, professional lighting"
-                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    将对 {selected.size} 个产品生成 1080P / 6s 图生视频（模型 MiniMax-Hailuo-2.3），每个约需 1-2 分钟。
-                  </p>
-                  {videoProgress && (
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                        <span>进度 · 成功 {videoProgress.success} · 失败 {videoProgress.failed}</span>
-                        <span>{videoProgress.current} / {videoProgress.total}</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div className="h-1.5 bg-blue-500 rounded-full transition-all"
-                          style={{ width: `${videoProgress.total ? (videoProgress.current / videoProgress.total) * 100 : 0}%` }} />
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <button onClick={applyBatchGenerateVideo} disabled={batchBusy || selected.size === 0}
-                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
-                      {batchBusy ? '生成中...' : '开始生成'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {batchMessage && (
-              <div className={`mt-3 p-2 rounded text-sm ${
-                batchMessage.includes('失败') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
-              }`}>
-                {batchMessage}
-              </div>
+      <Modal
+        open={showShopModal}
+        onClose={() => setShowShopModal(false)}
+        size="md"
+        title={
+          <span>
+            从店铺选择参考商品
+            {shopTotal > 0 && (
+              <span className="ml-3 font-mono text-xs text-ink-secondary tabular">
+                共 {shopTotal} · 第 {shopPage}/{totalShopPages} 页
+              </span>
             )}
-
-            <div className="flex justify-end mt-4">
-              <button onClick={closeBatchEdit} disabled={batchBusy}
-                className="px-4 py-2 text-sm bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50">
-                关闭
-              </button>
+          </span>
+        }
+        footer={
+          shopTotal > 0 ? (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => loadShopPage(shopPage - 1)}
+                disabled={shopLoading || shopPage <= 1}
+              >
+                ← 上一页
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => loadShopPage(shopPage + 1)}
+                disabled={shopLoading || shopPage >= totalShopPages}
+              >
+                下一页 →
+              </Button>
+              <span className="ml-auto text-[10px] font-mono text-ink-muted">跳转</span>
+              <Input
+                type="number"
+                min={1}
+                max={totalShopPages}
+                value={shopJumpInput}
+                onChange={(e) => setShopJumpInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleShopJump();
+                }}
+                placeholder={String(shopPage)}
+                className="w-16 text-center font-mono"
+              />
+              <Button size="sm" variant="primary" onClick={handleShopJump} disabled={shopLoading}>
+                Go
+              </Button>
             </div>
-          </div>
-        </div>
-      )}
+          ) : null
+        }
+      >
+        {shopLoading ? (
+          <p className="text-center text-ink-muted py-8">加载中...</p>
+        ) : shopProducts.length === 0 ? (
+          <p className="text-center text-ink-muted py-8">暂无数据</p>
+        ) : (
+          shopProducts.map((p) => (
+            <div
+              key={p.productId}
+              onClick={() => selectShopProduct(p)}
+              className="flex items-center gap-3 p-3 hover:bg-surface-hover rounded-md cursor-pointer border-b border-edge-subtle"
+            >
+              {p.thumbUrl && (
+                <img
+                  src={p.thumbUrl}
+                  alt=""
+                  className="w-12 h-12 object-cover rounded-md border border-edge"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-ink-primary truncate">{p.productName}</div>
+                <div className="text-[10px] font-mono text-ink-muted tabular">
+                  {p.catName ? `${p.catName} · ` : ''}ID: {p.productId}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </Modal>
 
-      {/* Product Edit Modal */}
+      {/* Batch Edit Modal */}
+      <BatchEditModal
+        open={showBatchEdit}
+        onClose={() => setShowBatchEdit(false)}
+        selectedIds={selection.selectedIds}
+        initialTab={batchInitialTab}
+        onCompleted={loadData}
+      />
+
+      {/* Per-product edit modal */}
       {editingProductId && (
         <ProductEditModal
           productId={editingProductId}
           onClose={() => setEditingProductId(null)}
-          onSaved={() => { setEditingProductId(null); loadData(); }}
+          onSaved={() => {
+            setEditingProductId(null);
+            loadData();
+          }}
         />
       )}
+    </WorkspacePage>
+  );
+}
+
+function FormField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <label className="block text-[10px] font-mono text-ink-secondary mb-1 uppercase tracking-wider">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }

@@ -198,10 +198,13 @@ function createTables() {
       duration INTEGER,
       resolution TEXT,
       error_msg TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      file_size INTEGER
     )
   `);
   db.run(`CREATE INDEX IF NOT EXISTS idx_product_videos_product ON product_videos(product_id)`);
+  // Migration: add file_size column to existing product_videos tables (idempotent)
+  try { db.run(`ALTER TABLE product_videos ADD COLUMN file_size INTEGER`); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS cookies (

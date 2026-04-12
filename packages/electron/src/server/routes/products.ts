@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { dbAll, dbGet, dbRun } from '../../services/database';
-import { getUploadsDir } from '../../services/storage';
+import { getUploadsDir, getVideosDir } from '../../services/storage';
 import { MiniMaxClient } from '../../services/minimax-client';
 import { fetchTrendingKeywords } from '../../services/temu-keywords';
 import { enqueueVideoGeneration } from '../../services/video-task-queue';
@@ -417,6 +417,11 @@ productsRouter.get('/:id', (req, res) => {
 
   const images = dbAll('SELECT * FROM product_images WHERE product_id = ? ORDER BY sort_order', [req.params.id]);
   const mockups = dbAll('SELECT * FROM mockup_images WHERE product_id = ? ORDER BY sort_order', [req.params.id]);
+  const videos = dbAll(
+    `SELECT id, file_path, status, duration, resolution, error_msg, created_at, file_size
+     FROM product_videos WHERE product_id = ? ORDER BY created_at DESC`,
+    [req.params.id]
+  );
 
   const response: ApiResponse<ProductDetailResponse> = {
     success: true,
@@ -424,9 +429,30 @@ productsRouter.get('/:id', (req, res) => {
       product: mapProduct(product),
       images: images as any[],
       mockups: mockups as any[],
+      videos: videos as any[],
     },
   };
   res.json(response);
+});
+
+// DELETE /api/products/:id/videos/:videoId - Delete one generated video
+productsRouter.delete('/:id/videos/:videoId', (req, res) => {
+  const row = dbGet(
+    'SELECT file_path FROM product_videos WHERE id = ? AND product_id = ?',
+    [req.params.videoId, req.params.id]
+  );
+  if (!row) {
+    res.status(404).json({ success: false, error: 'video not found' });
+    return;
+  }
+  const filePath = row.file_path as string;
+  if (typeof filePath === 'string' && filePath.startsWith('/uploads/videos/')) {
+    try {
+      fs.unlinkSync(path.join(getVideosDir(), path.basename(filePath)));
+    } catch {}
+  }
+  dbRun('DELETE FROM product_videos WHERE id = ?', [req.params.videoId]);
+  res.json({ success: true });
 });
 
 // DELETE /api/products/:id - Delete product

@@ -270,14 +270,13 @@ mockupRouter.post('/detect-layers', async (req, res) => {
 });
 
 // POST /api/mockup/batch-dir - Batch mockup from directory
-// Templates can omit smartObjectLayerName — auto-detected at runtime
+// Each image × each template → separate folder with per-scene exports (1.jpg, 2.jpg...)
 mockupRouter.post('/batch-dir', async (req, res) => {
   const { config } = req.body;
   const {
     imageDir,
     templateDir,
     outputDir,
-    namingPattern = '{image}_{template}',
     exportFormat = 'jpg',
     jpgQuality = 10,
   } = config;
@@ -318,20 +317,6 @@ mockupRouter.post('/batch-dir', async (req, res) => {
     const psClient = new PhotoshopClient();
     await psClient.connect(psHost, psPort, psPassword);
 
-    // Auto-detect smart object layers for each template (black box)
-    const templateLayerMap = new Map<string, string>();
-    for (const psdFile of psdFiles) {
-      const psdPath = path.join(templateDir, psdFile);
-      try {
-        const layers = await psClient.getSmartObjectLayers(psdPath);
-        if (layers.length > 0) {
-          templateLayerMap.set(psdFile, layers[0]); // Use first smart object layer
-        }
-      } catch (err) {
-        console.error(`Failed to detect layers in ${psdFile}:`, err);
-      }
-    }
-
     for (const imageFile of imageFiles) {
       const imagePath = path.join(imageDir, imageFile);
       const imageName = path.basename(imageFile, path.extname(imageFile));
@@ -340,39 +325,10 @@ mockupRouter.post('/batch-dir', async (req, res) => {
         current++;
         const psdPath = path.join(templateDir, psdFile);
         const templateName = path.basename(psdFile, '.psd');
-        const layerName = templateLayerMap.get(psdFile);
 
-        if (!layerName) {
-          broadcastToWeb({
-            type: 'mockup:progress',
-            id: uuid(),
-            timestamp: Date.now(),
-            payload: {
-              current,
-              total: totalJobs,
-              productTitle: imageFile,
-              templateName,
-              status: 'error',
-              error: '未找到智能对象图层',
-            },
-          });
-          continue;
-        }
-
-        // Resolve naming pattern
-        const outName = namingPattern
-          .replace(/\{image\}/g, imageName)
-          .replace(/\{template\}/g, templateName)
-          .replace(/\{index\}/g, String(current).padStart(3, '0'));
-
-        const outFileName = `${outName}.${exportFormat}`;
-        const outputPath = path.join(outputDir, outFileName);
-
-        // Ensure subdirectories exist (pattern may include slashes)
-        const outSubDir = path.dirname(outputPath);
-        if (!fs.existsSync(outSubDir)) {
-          fs.mkdirSync(outSubDir, { recursive: true });
-        }
+        // Output: outputDir / templateName / imageName / 1.jpg, 2.jpg...
+        const sceneOutputDir = path.join(outputDir, templateName, imageName);
+        fs.mkdirSync(sceneOutputDir, { recursive: true });
 
         broadcastToWeb({
           type: 'mockup:progress',
@@ -388,12 +344,12 @@ mockupRouter.post('/batch-dir', async (req, res) => {
         });
 
         try {
-          await psClient.replaceSmartObject(
+          const sceneCount = await psClient.replaceAndExportScenes(
             psdPath,
-            layerName,
             imagePath,
-            outputPath,
-            exportFormat === 'jpg' ? jpgQuality : undefined
+            sceneOutputDir,
+            exportFormat,
+            jpgQuality
           );
 
           broadcastToWeb({
@@ -406,6 +362,7 @@ mockupRouter.post('/batch-dir', async (req, res) => {
               productTitle: imageFile,
               templateName,
               status: 'completed',
+              sceneCount,
             },
           });
         } catch (err) {

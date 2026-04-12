@@ -280,6 +280,145 @@ export class PhotoshopClient {
     return result.split('\n').filter(Boolean);
   }
 
+  /**
+   * Get PSD structure info: layer comps, top-level groups, document size
+   */
+  async getPsdStructure(psdPath: string): Promise<{ layerComps: string[]; topGroups: string[]; width: number; height: number }> {
+    const normPsd = psdPath.replace(/\\/g, '/');
+    const jsx = `
+      var doc = app.open(new File("${normPsd}"));
+      var comps = [];
+      for (var i = 0; i < doc.layerComps.length; i++) {
+        comps.push(doc.layerComps[i].name);
+      }
+      var groups = [];
+      for (var i = 0; i < doc.layers.length; i++) {
+        if (doc.layers[i].typename === "LayerSet") {
+          groups.push(doc.layers[i].name);
+        }
+      }
+      var w = doc.width.as("px");
+      var h = doc.height.as("px");
+      doc.close(SaveOptions.DONOTSAVECHANGES);
+      JSON.stringify({ comps: comps, groups: groups, w: w, h: h });
+    `;
+    const result = await this.executeScript(jsx, 30000);
+    const parsed = JSON.parse(result);
+    return { layerComps: parsed.comps, topGroups: parsed.groups, width: parsed.w, height: parsed.h };
+  }
+
+  /**
+   * Replace smart object and export each scene (layer comp or top-level group) as separate file.
+   * Returns the number of exported files.
+   */
+  async replaceAndExportScenes(
+    psdPath: string,
+    imagePath: string,
+    outputDir: string,
+    exportFormat: 'jpg' | 'png',
+    jpgQuality: number
+  ): Promise<number> {
+    const normPsd = psdPath.replace(/\\/g, '/');
+    const normImage = imagePath.replace(/\\/g, '/');
+    const normOutput = outputDir.replace(/\\/g, '/');
+    const isJpg = exportFormat === 'jpg';
+    const quality = jpgQuality ?? 10;
+
+    // Step 1: Open PSD, find first smart object, replace, then export scenes
+    const jsx = `
+      var doc = app.open(new File("${normPsd}"));
+      try {
+        // Find first smart object layer (recursive)
+        var soLayer = null;
+        function findSO(layers) {
+          for (var i = 0; i < layers.length; i++) {
+            if (layers[i].kind == LayerKind.SMARTOBJECT) { soLayer = layers[i]; return true; }
+            if (layers[i].typename === "LayerSet" && findSO(layers[i].layers)) return true;
+          }
+          return false;
+        }
+        findSO(doc.layers);
+
+        if (!soLayer) { doc.close(SaveOptions.DONOTSAVECHANGES); throw new Error("No smart object found"); }
+
+        // Replace smart object contents
+        doc.activeLayer = soLayer;
+        var desc = new ActionDescriptor();
+        desc.putPath(charIDToTypeID("null"), new File("${normImage}"));
+        executeAction(stringIDToTypeID("placedLayerReplaceContents"), desc, DialogModes.NO);
+
+        var count = 0;
+        var outFolder = new Folder("${normOutput}");
+        if (!outFolder.exists) outFolder.create();
+
+        if (doc.layerComps.length > 0) {
+          // Export each layer comp as separate file
+          for (var i = 0; i < doc.layerComps.length; i++) {
+            doc.layerComps[i].apply();
+            count++;
+            ${isJpg ? `
+            var saveOpts = new JPEGSaveOptions();
+            saveOpts.quality = ${quality};
+            ` : `
+            var saveOpts = new PNGSaveOptions();
+            saveOpts.compression = 6;
+            `}
+            doc.saveAs(new File("${normOutput}/" + count + ".${exportFormat}"), saveOpts, true);
+          }
+        } else {
+          // Fallback: export each top-level group as separate scene
+          // First collect all group indices
+          var groupIndices = [];
+          for (var i = 0; i < doc.layers.length; i++) {
+            if (doc.layers[i].typename === "LayerSet") {
+              groupIndices.push(i);
+            }
+          }
+
+          if (groupIndices.length > 0) {
+            for (var g = 0; g < groupIndices.length; g++) {
+              // Hide all top-level layers
+              for (var j = 0; j < doc.layers.length; j++) {
+                doc.layers[j].visible = false;
+              }
+              // Show only this group
+              doc.layers[groupIndices[g]].visible = true;
+              count++;
+              ${isJpg ? `
+              var saveOpts2 = new JPEGSaveOptions();
+              saveOpts2.quality = ${quality};
+              ` : `
+              var saveOpts2 = new PNGSaveOptions();
+              saveOpts2.compression = 6;
+              `}
+              doc.saveAs(new File("${normOutput}/" + count + ".${exportFormat}"), saveOpts2, true);
+            }
+          } else {
+            // No comps, no groups: just save the whole thing
+            count = 1;
+            ${isJpg ? `
+            var saveOpts3 = new JPEGSaveOptions();
+            saveOpts3.quality = ${quality};
+            ` : `
+            var saveOpts3 = new PNGSaveOptions();
+            saveOpts3.compression = 6;
+            `}
+            doc.saveAs(new File("${normOutput}/1.${exportFormat}"), saveOpts3, true);
+          }
+        }
+
+        doc.close(SaveOptions.DONOTSAVECHANGES);
+        count.toString();
+      } catch(e) {
+        try { doc.close(SaveOptions.DONOTSAVECHANGES); } catch(e2) {}
+        throw e;
+      }
+    `;
+
+    const result = await this.executeScript(jsx, 120000); // 2 min timeout for large PSDs
+    return parseInt(result) || 0;
+  }
+
   disconnect() {
     if (this.socket) {
       this.socket.destroy();

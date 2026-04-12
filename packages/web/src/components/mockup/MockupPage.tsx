@@ -1,282 +1,389 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Play } from 'lucide-react';
+import {
+  Play, FolderOpen, Search, Image, Layers, Settings2,
+  FileText, Monitor,
+} from 'lucide-react';
 import { api } from '../../api/client';
 import { WorkspacePage } from '../platform/WorkspacePage';
-import { BatchActionBar } from '../platform/BatchActionBar';
-import { useSelection } from '../platform/useSelection';
 import { useWsEvent, type WsMessage } from '../platform/WebSocketBus';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Modal } from '../ui/Modal';
-import { Checkbox } from '../ui/Checkbox';
-import { EmptyState } from '../ui/EmptyState';
+import { Badge } from '../ui/Badge';
+import { Spinner } from '../ui/Spinner';
 import { toast } from '../ui/Toast';
+import { Tabs } from '../ui/Tabs';
 
-interface MockupTemplate {
-  id: string;
+interface ScannedFile {
+  path: string;
   name: string;
-  smart_object_layer_name?: string;
-  psd_path?: string;
+  size: number;
 }
 
-interface ProductLite {
-  id: string;
-  title: string;
-  thumbnail?: string | null;
+type ExportFormat = 'jpg' | 'png';
+
+const NAMING_TOKENS = [
+  { token: '{image}', label: '图片名' },
+  { token: '{template}', label: '模板名' },
+  { token: '{index}', label: '序号' },
+];
+
+function SectionHeader({ icon: Icon, title, badge }: { icon: any; title: string; badge?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2.5 mb-3">
+      <div className="w-7 h-7 rounded-md bg-gold-soft flex items-center justify-center">
+        <Icon size={14} className="text-gold" />
+      </div>
+      <h3 className="font-display text-base text-ink-primary">{title}</h3>
+      {badge}
+    </div>
+  );
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
+      {children}
+    </label>
+  );
 }
 
 export function MockupPage() {
-  const [templates, setTemplates] = useState<MockupTemplate[]>([]);
-  const [products, setProducts] = useState<ProductLite[]>([]);
-  const [showAddTemplate, setShowAddTemplate] = useState(false);
-  const [newTemplate, setNewTemplate] = useState({ name: '', psdPath: '', smartObjectLayerName: '' });
+  // Source images
+  const [imageDir, setImageDir] = useState('');
+  const [scannedImages, setScannedImages] = useState<ScannedFile[]>([]);
+  const [scanningImages, setScanningImages] = useState(false);
 
-  const productSel = useSelection(products);
-  const templateSel = useSelection(templates);
+  // Templates
+  const [templateDir, setTemplateDir] = useState('');
+  const [scannedTemplates, setScannedTemplates] = useState<ScannedFile[]>([]);
+  const [scanningTemplates, setScanningTemplates] = useState(false);
 
-  const loadData = useCallback(async () => {
-    const [templatesRes, productsRes]: any[] = await Promise.all([
-      api.mockup.templates(),
-      api.products.list(1, 100),
-    ]);
-    setTemplates(templatesRes.data?.templates || []);
-    setProducts(productsRes.data?.products || []);
+  // Output config
+  const [outputDir, setOutputDir] = useState('');
+  const [namingPattern, setNamingPattern] = useState('{template}_{image}');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('jpg');
+  const [jpgQuality, setJpgQuality] = useState(10);
+
+  // PS connection
+  const [psConnected, setPsConnected] = useState<boolean | null>(null);
+  const [running, setRunning] = useState(false);
+
+  // Load defaults from settings
+  useEffect(() => {
+    (async () => {
+      try {
+        const res: any = await api.settings.get();
+        const s = res.data || {};
+        if (s.input_dir) setImageDir(s.input_dir);
+        if (s.templates_dir) setTemplateDir(s.templates_dir);
+        if (s.output_dir) setOutputDir(s.output_dir);
+      } catch {}
+    })();
   }, []);
 
+  // Test PS connection on mount (uses stored settings on backend)
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    (async () => {
+      try {
+        const connRes: any = await api.mockup.testConnectionStored();
+        setPsConnected(connRes.success);
+      } catch {
+        setPsConnected(false);
+      }
+    })();
+  }, []);
 
-  // Refresh on completion. Progress visualization handled by global TaskTray.
+  // Listen for batch completion
   useWsEvent(
     'mockup:progress',
-    useCallback(
-      (msg: WsMessage) => {
-        const p = msg.payload || {};
-        if (p.current >= p.total && p.status !== 'processing') {
-          loadData();
-        }
-      },
-      [loadData]
-    )
+    useCallback((msg: WsMessage) => {
+      const p = msg.payload || {};
+      if (p.current >= p.total && p.status !== 'processing') {
+        setRunning(false);
+        toast.success(`套图完成：${p.current} 个任务`);
+      }
+    }, [])
   );
 
-  async function addTemplate() {
-    if (!newTemplate.name) {
-      toast.error('请填写模板名称');
-      return;
-    }
+  // === Actions ===
+
+  async function scanImages() {
+    if (!imageDir.trim()) { toast.error('请填写图片目录路径'); return; }
+    setScanningImages(true);
     try {
-      await api.mockup.addTemplate(newTemplate);
-      toast.success('模板已添加');
-      setNewTemplate({ name: '', psdPath: '', smartObjectLayerName: '' });
-      setShowAddTemplate(false);
-      loadData();
+      const res: any = await api.mockup.scanDir(imageDir.trim());
+      if (!res.success) { toast.error(res.error || '扫描失败'); setScannedImages([]); return; }
+      setScannedImages(res.data.files);
+      if (res.data.count === 0) toast.info('目录中没有找到图片文件');
     } catch (e) {
-      toast.error('添加失败：' + (e as Error).message);
-    }
+      toast.error('扫描失败：' + (e as Error).message);
+    } finally { setScanningImages(false); }
+  }
+
+  async function scanTemplates() {
+    if (!templateDir.trim()) { toast.error('请填写模板目录路径'); return; }
+    setScanningTemplates(true);
+    try {
+      const res: any = await api.mockup.scanTemplates(templateDir.trim());
+      if (!res.success) { toast.error(res.error || '扫描失败'); setScannedTemplates([]); return; }
+      setScannedTemplates(res.data.templates);
+      if (res.data.count === 0) toast.info('目录中没有找到 PSD 文件');
+    } catch (e) {
+      toast.error('扫描失败：' + (e as Error).message);
+    } finally { setScanningTemplates(false); }
   }
 
   async function startBatch() {
-    if (productSel.count === 0 || templateSel.count === 0) return;
+    if (scannedImages.length === 0) { toast.error('请先扫描图片目录'); return; }
+    if (scannedTemplates.length === 0) { toast.error('请先扫描模板目录'); return; }
+    if (!outputDir.trim()) { toast.error('请填写输出目录'); return; }
+    if (psConnected !== true) { toast.error('Photoshop 未连接，请在设置页配置'); return; }
+
+    setRunning(true);
     try {
-      await api.mockup.startBatch({
-        productIds: productSel.selectedIds,
-        templateIds: templateSel.selectedIds,
-        removeBackground: true,
-        exportFormat: 'jpg',
-        jpgQuality: 10,
+      const res: any = await api.mockup.startBatchDir({
+        imageDir: imageDir.trim(),
+        templateDir: templateDir.trim(),
+        outputDir: outputDir.trim(),
+        namingPattern,
+        exportFormat,
+        jpgQuality,
       });
+      if (!res.success) {
+        toast.error(res.error || '启动失败');
+        setRunning(false);
+        return;
+      }
       toast.success(
-        `已提交 ${productSel.count} 产品 × ${templateSel.count} 模板，进度见右下角任务盘`
+        `已提交 ${scannedImages.length} 张图 × ${scannedTemplates.length} 个模板，进度见右下角任务盘`
       );
     } catch (e) {
-      toast.error('开始失败：' + (e as Error).message);
+      toast.error('启动失败：' + (e as Error).message);
+      setRunning(false);
     }
   }
+
+  const totalJobs = scannedImages.length * scannedTemplates.length;
+
+  // Preview naming
+  const previewName = namingPattern
+    .replace(/\{image\}/g, 'photo_01')
+    .replace(/\{template\}/g, 'mockup_desk')
+    .replace(/\{index\}/g, '001');
+
+  const canStart = scannedImages.length > 0 && scannedTemplates.length > 0 && outputDir.trim() && psConnected === true && !running;
 
   return (
     <WorkspacePage>
       <WorkspacePage.Header
         title="批量套图"
-        subtitle={`${templates.length} templates · ${products.length} products · ${productSel.count} selected`}
+        subtitle={
+          totalJobs > 0
+            ? `${scannedImages.length} 张图 × ${scannedTemplates.length} 模板 = ${totalJobs} 个任务`
+            : '选择图片目录和模板目录，一键套图'
+        }
         actions={
-          <Button
-            variant="primary"
-            leftIcon={<Plus size={14} />}
-            onClick={() => setShowAddTemplate(true)}
-          >
-            新建模板
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Monitor size={14} className="text-ink-muted" />
+            <span className="text-[10px] font-mono text-ink-muted">PS</span>
+            <div
+              className={`w-2 h-2 rounded-full ${
+                psConnected === true
+                  ? 'bg-status-success'
+                  : psConnected === false
+                  ? 'bg-status-danger'
+                  : 'bg-ink-muted animate-pulse'
+              }`}
+            />
+          </div>
         }
       />
 
       <WorkspacePage.Content>
-        <div className="grid grid-cols-12 gap-6 h-full min-h-0">
-          {/* Templates panel */}
-          <Card className="col-span-12 lg:col-span-5 flex flex-col p-0 overflow-hidden">
-            <div className="px-4 py-3 border-b border-edge-subtle">
-              <h3 className="font-display text-base text-ink-primary">样机模板</h3>
-              <div className="font-mono text-[10px] text-ink-muted mt-0.5 tabular">
-                {templateSel.count} / {templates.length} selected
+        <div className="max-w-4xl mx-auto space-y-5">
+          {/* Section 1: Source Images */}
+          <Card padded>
+            <SectionHeader
+              icon={Image}
+              title="图片来源"
+              badge={
+                scannedImages.length > 0
+                  ? <Badge variant="count" tone="gold">{scannedImages.length} 张图片</Badge>
+                  : undefined
+              }
+            />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Input
+                  value={imageDir}
+                  onChange={(e) => setImageDir(e.target.value)}
+                  placeholder="图片所在目录路径，如 E:\素材\产品图"
+                  className="font-mono text-sm"
+                  onKeyDown={(e) => e.key === 'Enter' && scanImages()}
+                />
               </div>
+              <Button
+                variant="secondary"
+                leftIcon={scanningImages ? <Spinner size={14} /> : <Search size={14} />}
+                onClick={scanImages}
+                disabled={scanningImages}
+              >
+                扫描
+              </Button>
             </div>
-            {templates.length === 0 ? (
-              <EmptyState title="暂无模板" description="点击右上角「新建模板」添加 PSD 样机" />
-            ) : (
-              <div className="flex-1 overflow-y-auto divide-y divide-edge-subtle">
-                {templates.map((t) => {
-                  const sel = templateSel.isSelected(t.id);
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => templateSel.toggle(t.id)}
-                      className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${
-                        sel ? 'bg-gold-soft' : 'hover:bg-surface-hover'
-                      }`}
-                    >
-                      <Checkbox checked={sel} readOnly className="mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-ink-primary truncate">{t.name}</div>
-                        {t.smart_object_layer_name && (
-                          <div className="text-[10px] font-mono text-ink-muted mt-0.5 truncate">
-                            {t.smart_object_layer_name}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+
+            {scannedImages.length > 0 && (
+              <div className="mt-3 text-xs text-ink-secondary">
+                找到 {scannedImages.length} 张图片（
+                {(scannedImages.reduce((s, f) => s + f.size, 0) / 1024 / 1024).toFixed(1)} MB）
               </div>
             )}
           </Card>
 
-          {/* Products picker */}
-          <Card className="col-span-12 lg:col-span-7 flex flex-col p-0 overflow-hidden">
-            <div className="px-4 py-3 border-b border-edge-subtle">
-              <h3 className="font-display text-base text-ink-primary">选择产品</h3>
-              <div className="font-mono text-[10px] text-ink-muted mt-0.5 tabular">
-                {productSel.count} / {products.length} selected
+          {/* Section 2: PSD Templates */}
+          <Card padded>
+            <SectionHeader
+              icon={Layers}
+              title="PSD 样机模板"
+              badge={
+                scannedTemplates.length > 0
+                  ? <Badge variant="count" tone="violet">{scannedTemplates.length} 个模板</Badge>
+                  : undefined
+              }
+            />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Input
+                  value={templateDir}
+                  onChange={(e) => setTemplateDir(e.target.value)}
+                  placeholder="PSD 模板所在目录路径，如 E:\模板\样机"
+                  className="font-mono text-sm"
+                  onKeyDown={(e) => e.key === 'Enter' && scanTemplates()}
+                />
               </div>
+              <Button
+                variant="secondary"
+                leftIcon={scanningTemplates ? <Spinner size={14} /> : <FolderOpen size={14} />}
+                onClick={scanTemplates}
+                disabled={scanningTemplates}
+              >
+                扫描模板
+              </Button>
             </div>
-            {products.length === 0 ? (
-              <EmptyState title="暂无产品" description="先在 Temu 商品页用插件采集" />
-            ) : (
-              <div className="flex-1 overflow-y-auto p-3 grid grid-cols-3 gap-2">
-                {products.map((p) => {
-                  const sel = productSel.isSelected(p.id);
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => productSel.toggle(p.id)}
-                      className={`relative rounded-md border cursor-pointer overflow-hidden transition-all ${
-                        sel ? 'border-gold shadow-glow-gold' : 'border-edge hover:border-edge-strong'
-                      }`}
-                    >
-                      <div className="aspect-square bg-surface-base">
-                        {p.thumbnail ? (
-                          <img
-                            src={p.thumbnail}
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-cover"
-                            alt=""
-                            onError={(e) =>
-                              ((e.currentTarget as HTMLImageElement).style.display = 'none')
-                            }
-                          />
-                        ) : null}
-                      </div>
-                      <div className="p-2">
-                        <div className="text-[11px] text-ink-primary line-clamp-2 leading-snug">
-                          {p.title}
-                        </div>
-                      </div>
-                      {sel && (
-                        <div className="absolute top-1.5 right-1.5">
-                          <Checkbox checked readOnly />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+            {scannedTemplates.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {scannedTemplates.map((tpl) => (
+                  <div
+                    key={tpl.path}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-base/60 border border-edge-subtle"
+                  >
+                    <FileText size={16} className="text-ink-muted shrink-0" />
+                    <span className="text-sm text-ink-primary truncate">{tpl.name}</span>
+                    <span className="text-[10px] font-mono text-ink-muted ml-auto shrink-0">
+                      {(tpl.size / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </Card>
+
+          {/* Section 3: Output Config */}
+          <Card padded>
+            <SectionHeader icon={Settings2} title="输出配置" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+              {/* Left column */}
+              <div className="space-y-4">
+                <div>
+                  <FieldLabel>输出目录</FieldLabel>
+                  <Input
+                    value={outputDir}
+                    onChange={(e) => setOutputDir(e.target.value)}
+                    placeholder="套图输出保存目录"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <FieldLabel>命名规则</FieldLabel>
+                  <Input
+                    value={namingPattern}
+                    onChange={(e) => setNamingPattern(e.target.value)}
+                    placeholder="{template}_{image}"
+                    className="font-mono text-sm"
+                  />
+                  <div className="flex gap-1.5 mt-1.5">
+                    {NAMING_TOKENS.map((t) => (
+                      <button
+                        key={t.token}
+                        onClick={() => setNamingPattern((prev) => prev + t.token)}
+                        className="px-2 py-0.5 rounded text-[10px] font-mono bg-gold-soft text-gold border border-gold/20 hover:bg-gold/20 transition-colors"
+                      >
+                        {t.token}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[10px] font-mono text-ink-muted mt-1">
+                    预览: <span className="text-ink-secondary">{previewName}.{exportFormat}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right column */}
+              <div className="space-y-4">
+                <div>
+                  <FieldLabel>输出格式</FieldLabel>
+                  <Tabs
+                    items={[
+                      { id: 'jpg', label: 'JPG' },
+                      { id: 'png', label: 'PNG' },
+                    ]}
+                    value={exportFormat}
+                    onChange={(v) => setExportFormat(v as ExportFormat)}
+                  />
+                </div>
+
+                {exportFormat === 'jpg' && (
+                  <div>
+                    <FieldLabel>JPG 质量 ({jpgQuality}/12)</FieldLabel>
+                    <input
+                      type="range"
+                      min={1}
+                      max={12}
+                      value={jpgQuality}
+                      onChange={(e) => setJpgQuality(Number(e.target.value))}
+                      className="w-full h-1.5 rounded-full appearance-none bg-surface-base accent-gold cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[9px] font-mono text-ink-muted mt-0.5">
+                      <span>低质量</span>
+                      <span>高质量</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* Start Button */}
+          <div className="flex items-center justify-between pt-2 pb-4">
+            <div className="text-sm text-ink-secondary">
+              {totalJobs > 0
+                ? `${scannedImages.length} 张图 × ${scannedTemplates.length} 模板 = ${totalJobs} 个任务`
+                : '扫描图片和模板目录后开始'}
+            </div>
+            <Button
+              variant="primary"
+              size="lg"
+              leftIcon={running ? <Spinner size={16} /> : <Play size={16} />}
+              onClick={startBatch}
+              disabled={!canStart}
+            >
+              {running ? '套图中…' : '开始套图'}
+            </Button>
+          </div>
         </div>
       </WorkspacePage.Content>
-
-      <WorkspacePage.Footer>
-        <BatchActionBar
-          count={productSel.count}
-          label={`产品已选 · 模板 ${templateSel.count}`}
-          actions={[
-            {
-              id: 'run',
-              label: '开始套图',
-              icon: <Play size={14} />,
-              primary: true,
-              disabled: productSel.count === 0 || templateSel.count === 0,
-              onClick: startBatch,
-            },
-          ]}
-          onClear={productSel.clear}
-        />
-      </WorkspacePage.Footer>
-
-      <Modal
-        open={showAddTemplate}
-        onClose={() => setShowAddTemplate(false)}
-        title="新建样机模板"
-        size="sm"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setShowAddTemplate(false)}>
-              取消
-            </Button>
-            <Button variant="primary" onClick={addTemplate}>
-              保存
-            </Button>
-          </div>
-        }
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
-              模板名称
-            </label>
-            <Input
-              value={newTemplate.name}
-              onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })}
-              placeholder="例如：白底书桌"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
-              PSD 文件路径
-            </label>
-            <Input
-              value={newTemplate.psdPath}
-              onChange={(e) => setNewTemplate({ ...newTemplate, psdPath: e.target.value })}
-              placeholder="C:\templates\desk.psd"
-              className="font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-mono text-ink-secondary mb-1.5 uppercase tracking-widest">
-              智能对象图层名称
-            </label>
-            <Input
-              value={newTemplate.smartObjectLayerName}
-              onChange={(e) =>
-                setNewTemplate({ ...newTemplate, smartObjectLayerName: e.target.value })
-              }
-              placeholder="ProductImage"
-              className="font-mono"
-            />
-          </div>
-        </div>
-      </Modal>
     </WorkspacePage>
   );
 }

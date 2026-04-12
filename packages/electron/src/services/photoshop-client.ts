@@ -252,6 +252,34 @@ export class PhotoshopClient {
     return result.split('\n').filter(Boolean);
   }
 
+  /**
+   * Auto-detect Smart Object layers in a PSD (recursive, includes layer groups)
+   */
+  async getSmartObjectLayers(psdPath: string): Promise<string[]> {
+    const normPsd = psdPath.replace(/\\/g, '/');
+    const jsx = `
+      var doc = app.open(new File("${normPsd}"));
+      var result = [];
+      function walkLayers(layers) {
+        for (var i = 0; i < layers.length; i++) {
+          var layer = layers[i];
+          if (layer.kind == LayerKind.SMARTOBJECT) {
+            result.push(layer.name);
+          }
+          if (layer.typename === "LayerSet") {
+            walkLayers(layer.layers);
+          }
+        }
+      }
+      walkLayers(doc.layers);
+      doc.close(SaveOptions.DONOTSAVECHANGES);
+      result.join("\\n");
+    `;
+
+    const result = await this.executeScript(jsx, 30000);
+    return result.split('\n').filter(Boolean);
+  }
+
   disconnect() {
     if (this.socket) {
       this.socket.destroy();

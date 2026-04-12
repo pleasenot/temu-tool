@@ -88,6 +88,16 @@ export const api = {
       request('/mockup/batch', { method: 'POST', body: JSON.stringify({ config }) }),
     testConnection: (host: string, port: number, password: string) =>
       request('/mockup/test-connection', { method: 'POST', body: JSON.stringify({ host, port, password }) }),
+    testConnectionStored: () =>
+      request<any>('/mockup/test-connection'),
+    scanDir: (dirPath: string) =>
+      request<any>('/mockup/scan-dir', { method: 'POST', body: JSON.stringify({ dirPath }) }),
+    scanTemplates: (dirPath: string) =>
+      request<any>('/mockup/scan-templates', { method: 'POST', body: JSON.stringify({ dirPath }) }),
+    detectLayers: (psdPath: string) =>
+      request<any>('/mockup/detect-layers', { method: 'POST', body: JSON.stringify({ psdPath }) }),
+    startBatchDir: (config: any) =>
+      request<any>('/mockup/batch-dir', { method: 'POST', body: JSON.stringify({ config }) }),
   },
 
   listing: {

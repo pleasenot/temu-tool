@@ -1,8 +1,11 @@
 import { Router, type Router as RouterType } from 'express';
 import { v4 as uuid } from 'uuid';
+import fs from 'fs';
+import path from 'path';
 import { dbAll, dbGet, dbRun } from '../../services/database';
 import { PhotoshopClient } from '../../services/photoshop-client';
 import { broadcastToWeb } from '../ws-server';
+import { getSetting } from '../../services/secure-settings';
 import type { ApiResponse, MockupTemplateListResponse } from '@temu-lister/shared';
 
 export const mockupRouter: RouterType = Router();
@@ -140,6 +143,35 @@ mockupRouter.post('/batch', async (req, res) => {
   }
 });
 
+// GET /api/mockup/test-connection - Test PS connection using stored settings
+mockupRouter.get('/test-connection', async (_req, res) => {
+  const host = getSetting('ps_host') || '127.0.0.1';
+  const port = parseInt(getSetting('ps_port') || '49494');
+  const password = getSetting('ps_password') || '';
+
+  const client = new PhotoshopClient();
+  try {
+    await client.connect(host, port, password);
+
+    const jsx = `
+      var docName = (app.documents.length > 0) ? app.activeDocument.name : "(no document)";
+      "PS " + app.version + " | docs=" + app.documents.length + " | active=" + docName + " | os=" + $.os;
+    `;
+    const result = await client.executeScript(jsx, 8000);
+    client.disconnect();
+    res.json({
+      success: true,
+      data: {
+        message: 'Photoshop verified',
+        info: result,
+      },
+    });
+  } catch (err) {
+    try { client.disconnect(); } catch {}
+    res.json({ success: false, error: String(err) });
+  }
+});
+
 // POST /api/mockup/test-connection - Test PS connection (real handshake + JSX ping)
 mockupRouter.post('/test-connection', async (req, res) => {
   const { host, port, password } = req.body;
@@ -163,5 +195,239 @@ mockupRouter.post('/test-connection', async (req, res) => {
   } catch (err) {
     try { client.disconnect(); } catch {}
     res.json({ success: false, error: String(err) });
+  }
+});
+
+// === Directory-based mockup endpoints ===
+
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif']);
+
+// POST /api/mockup/scan-dir - Scan directory for image files
+mockupRouter.post('/scan-dir', (req, res) => {
+  const { dirPath } = req.body;
+  if (!dirPath) return res.json({ success: false, error: 'dirPath is required' });
+
+  try {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return res.json({ success: false, error: '目录不存在' });
+    }
+    const entries = fs.readdirSync(dirPath);
+    const files = entries
+      .filter((f: string) => IMAGE_EXTS.has(path.extname(f).toLowerCase()))
+      .map((f: string) => {
+        const fullPath = path.join(dirPath, f);
+        const stat = fs.statSync(fullPath);
+        return { path: fullPath, name: f, size: stat.size };
+      });
+    res.json({ success: true, data: { files, count: files.length } });
+  } catch (err) {
+    res.json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/mockup/scan-templates - Scan directory for PSD files
+mockupRouter.post('/scan-templates', (req, res) => {
+  const { dirPath } = req.body;
+  if (!dirPath) return res.json({ success: false, error: 'dirPath is required' });
+
+  try {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return res.json({ success: false, error: '目录不存在' });
+    }
+    const entries = fs.readdirSync(dirPath);
+    const templates = entries
+      .filter((f: string) => path.extname(f).toLowerCase() === '.psd')
+      .map((f: string) => {
+        const fullPath = path.join(dirPath, f);
+        const stat = fs.statSync(fullPath);
+        return { path: fullPath, name: f, size: stat.size };
+      });
+    res.json({ success: true, data: { templates, count: templates.length } });
+  } catch (err) {
+    res.json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/mockup/detect-layers - Auto-detect smart object layers in a PSD
+mockupRouter.post('/detect-layers', async (req, res) => {
+  const { psdPath } = req.body;
+  if (!psdPath) return res.json({ success: false, error: 'psdPath is required' });
+
+  const psHost = getSetting('ps_host') || '127.0.0.1';
+  const psPort = parseInt(getSetting('ps_port') || '49494');
+  const psPassword = getSetting('ps_password') || '';
+
+  const client = new PhotoshopClient();
+  try {
+    await client.connect(psHost, psPort, psPassword);
+    const smartObjectLayers = await client.getSmartObjectLayers(psdPath);
+    client.disconnect();
+    res.json({ success: true, data: { smartObjectLayers } });
+  } catch (err) {
+    try { client.disconnect(); } catch {}
+    res.json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/mockup/batch-dir - Batch mockup from directory
+// Templates can omit smartObjectLayerName — auto-detected at runtime
+mockupRouter.post('/batch-dir', async (req, res) => {
+  const { config } = req.body;
+  const {
+    imageDir,
+    templateDir,
+    outputDir,
+    namingPattern = '{image}_{template}',
+    exportFormat = 'jpg',
+    jpgQuality = 10,
+  } = config;
+
+  // Validate
+  if (!imageDir || !templateDir || !outputDir) {
+    return res.json({ success: false, error: '缺少必要参数（图片目录、模板目录、输出目录）' });
+  }
+
+  // Scan images
+  const imgEntries = fs.readdirSync(imageDir);
+  const imageFiles = imgEntries.filter((f: string) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
+  if (imageFiles.length === 0) {
+    return res.json({ success: false, error: '图片目录中没有图片文件' });
+  }
+
+  // Scan PSD templates
+  const tplEntries = fs.readdirSync(templateDir);
+  const psdFiles = tplEntries.filter((f: string) => path.extname(f).toLowerCase() === '.psd');
+  if (psdFiles.length === 0) {
+    return res.json({ success: false, error: '模板目录中没有 PSD 文件' });
+  }
+
+  // Ensure output dir exists
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const totalJobs = imageFiles.length * psdFiles.length;
+  res.json({ success: true, data: { message: 'Batch mockup started', totalJobs } });
+
+  // Background processing
+  const psHost = getSetting('ps_host') || '127.0.0.1';
+  const psPort = parseInt(getSetting('ps_port') || '49494');
+  const psPassword = getSetting('ps_password') || '';
+
+  let current = 0;
+
+  try {
+    const psClient = new PhotoshopClient();
+    await psClient.connect(psHost, psPort, psPassword);
+
+    // Auto-detect smart object layers for each template (black box)
+    const templateLayerMap = new Map<string, string>();
+    for (const psdFile of psdFiles) {
+      const psdPath = path.join(templateDir, psdFile);
+      try {
+        const layers = await psClient.getSmartObjectLayers(psdPath);
+        if (layers.length > 0) {
+          templateLayerMap.set(psdFile, layers[0]); // Use first smart object layer
+        }
+      } catch (err) {
+        console.error(`Failed to detect layers in ${psdFile}:`, err);
+      }
+    }
+
+    for (const imageFile of imageFiles) {
+      const imagePath = path.join(imageDir, imageFile);
+      const imageName = path.basename(imageFile, path.extname(imageFile));
+
+      for (const psdFile of psdFiles) {
+        current++;
+        const psdPath = path.join(templateDir, psdFile);
+        const templateName = path.basename(psdFile, '.psd');
+        const layerName = templateLayerMap.get(psdFile);
+
+        if (!layerName) {
+          broadcastToWeb({
+            type: 'mockup:progress',
+            id: uuid(),
+            timestamp: Date.now(),
+            payload: {
+              current,
+              total: totalJobs,
+              productTitle: imageFile,
+              templateName,
+              status: 'error',
+              error: '未找到智能对象图层',
+            },
+          });
+          continue;
+        }
+
+        // Resolve naming pattern
+        const outName = namingPattern
+          .replace(/\{image\}/g, imageName)
+          .replace(/\{template\}/g, templateName)
+          .replace(/\{index\}/g, String(current).padStart(3, '0'));
+
+        const outFileName = `${outName}.${exportFormat}`;
+        const outputPath = path.join(outputDir, outFileName);
+
+        // Ensure subdirectories exist (pattern may include slashes)
+        const outSubDir = path.dirname(outputPath);
+        if (!fs.existsSync(outSubDir)) {
+          fs.mkdirSync(outSubDir, { recursive: true });
+        }
+
+        broadcastToWeb({
+          type: 'mockup:progress',
+          id: uuid(),
+          timestamp: Date.now(),
+          payload: {
+            current,
+            total: totalJobs,
+            productTitle: imageFile,
+            templateName,
+            status: 'processing',
+          },
+        });
+
+        try {
+          await psClient.replaceSmartObject(
+            psdPath,
+            layerName,
+            imagePath,
+            outputPath,
+            exportFormat === 'jpg' ? jpgQuality : undefined
+          );
+
+          broadcastToWeb({
+            type: 'mockup:progress',
+            id: uuid(),
+            timestamp: Date.now(),
+            payload: {
+              current,
+              total: totalJobs,
+              productTitle: imageFile,
+              templateName,
+              status: 'completed',
+            },
+          });
+        } catch (err) {
+          broadcastToWeb({
+            type: 'mockup:progress',
+            id: uuid(),
+            timestamp: Date.now(),
+            payload: {
+              current,
+              total: totalJobs,
+              productTitle: imageFile,
+              templateName,
+              status: 'error',
+              error: String(err),
+            },
+          });
+        }
+      }
+    }
+
+    psClient.disconnect();
+  } catch (err) {
+    console.error('Batch dir mockup error:', err);
   }
 });

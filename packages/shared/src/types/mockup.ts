@@ -34,3 +34,26 @@ export interface MockupProgress {
   status: 'processing' | 'completed' | 'error';
   error?: string;
 }
+
+// Directory-based batch mockup types
+export interface MockupDirBatchConfig {
+  imageDir: string;
+  templates: Array<{ psdPath: string; smartObjectLayerName: string }>;
+  outputDir: string;
+  namingPattern: string;
+  exportFormat: 'jpg' | 'png';
+  jpgQuality: number;
+  resizeMode: 'fit' | 'fill' | 'stretch' | 'none';
+  alignment: { h: 'left' | 'center' | 'right'; v: 'top' | 'center' | 'bottom' };
+  keepTransparency: boolean;
+}
+
+export interface ScannedFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface ScannedTemplate extends ScannedFile {
+  smartObjectLayers?: string[];
+}

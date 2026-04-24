@@ -3,16 +3,26 @@
   "version": "1.0.0",
   "private": true,
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp", "esbuild", "electron"]
+    "onlyBuiltDependencies": [
+      "sharp",
+      "esbuild",
+      "electron"
+    ]
   },
   "scripts": {
     "dev": "pnpm --parallel dev",
     "dev:electron": "pnpm --filter @temu-lister/electron dev",
     "dev:web": "pnpm --filter web dev",
-    "build": "pnpm --filter shared build && pnpm --parallel --filter '!shared' build",
+    "build": "pnpm build:shared && pnpm build:electron && pnpm build:web",
     "build:shared": "pnpm --filter shared build",
     "build:web": "pnpm --filter web build",
     "build:electron": "pnpm --filter @temu-lister/electron build",
+    "dist:win": "pnpm build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win-portable.ps1",
+    "dist:win:builder": "pnpm build && pnpm --filter @temu-lister/electron exec electron-builder --win portable --x64",
+    "dist:mac": "pnpm build && pnpm --filter @temu-lister/electron exec electron-builder --mac dmg zip --x64 --arm64",
     "typecheck": "pnpm --filter shared exec tsc --noEmit && pnpm --filter @temu-lister/electron exec tsc --noEmit && pnpm --filter web exec tsc --noEmit"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.8.1"
   }
 }

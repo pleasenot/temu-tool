@@ -6,6 +6,7 @@ interface BatchState {
   total: number;
   succ: number;
   fail: number;
+  seen: Set<string>;
 }
 
 /**
@@ -26,22 +27,31 @@ function makeBridgeHandler(kind: TaskKind, titleFn: (total: number) => string) {
     let s = slot.current;
     if (!s || s.total !== total) {
       const taskId = taskRegistry.start({ kind, title: titleFn(total), total });
-      s = slot.current = { taskId, total, succ: 0, fail: 0 };
+      s = slot.current = { taskId, total, succ: 0, fail: 0, seen: new Set() };
     }
 
-    // Any non-processing status = a finished item. Treat 'failed' / 'error' as failure.
     const isFailed = status === 'failed' || status === 'error';
-    const isFinished = status === 'success' || isFailed;
+    const isSucceeded = status === 'success' || status === 'completed' || status === 'submitted';
+    const isFinished = isSucceeded || isFailed;
     if (isFinished) {
-      if (isFailed) s.fail++;
-      else s.succ++;
+      const current = typeof p.current === 'number' ? p.current : 0;
+      const key = p.jobId !== undefined ? String(p.jobId) : current > 0 ? String(current) : msg.id;
+      if (!s.seen.has(key)) {
+        s.seen.add(key);
+        if (isFailed) s.fail++;
+        else s.succ++;
+      }
     }
 
     const done = s.succ + s.fail;
-    taskRegistry.update(s.taskId, { current: done, total });
+    const currentForDisplay =
+      status === 'processing' && typeof p.current === 'number'
+        ? Math.max(done, Math.max(0, p.current - 1))
+        : done;
+    taskRegistry.update(s.taskId, { current: currentForDisplay, total });
 
     if (done >= total) {
-      if (s.fail > 0 && s.succ === 0) {
+      if (s.fail > 0) {
         taskRegistry.fail(s.taskId, `${s.fail} 个失败`);
       } else {
         taskRegistry.done(s.taskId);

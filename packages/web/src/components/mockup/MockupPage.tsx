@@ -21,6 +21,7 @@ interface ScannedFile {
 }
 
 type ExportFormat = 'jpg' | 'png';
+type ResizeMode = 'fit' | 'fill' | 'stretch' | 'none';
 
 const NAMING_TOKENS = [
   { token: '{image}', label: '图片名' },
@@ -64,6 +65,7 @@ export function MockupPage() {
   const [namingPattern, setNamingPattern] = useState('{template}_{image}');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('jpg');
   const [jpgQuality, setJpgQuality] = useState(10);
+  const [resizeMode, setResizeMode] = useState<ResizeMode>('fill');
 
   // PS connection
   const [psConnected, setPsConnected] = useState<boolean | null>(null);
@@ -149,6 +151,7 @@ export function MockupPage() {
         namingPattern,
         exportFormat,
         jpgQuality,
+        resizeMode,
       });
       if (!res.success) {
         toast.error(res.error || '启动失败');
@@ -341,6 +344,20 @@ export function MockupPage() {
                     ]}
                     value={exportFormat}
                     onChange={(v) => setExportFormat(v as ExportFormat)}
+                  />
+                </div>
+
+                <div>
+                  <FieldLabel>Resize Mode</FieldLabel>
+                  <Tabs
+                    items={[
+                      { id: 'fit', label: 'Fit' },
+                      { id: 'fill', label: 'Fill' },
+                      { id: 'stretch', label: 'Stretch' },
+                      { id: 'none', label: 'None' },
+                    ]}
+                    value={resizeMode}
+                    onChange={(v) => setResizeMode(v as ResizeMode)}
                   />
                 </div>
 

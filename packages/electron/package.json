@@ -9,7 +9,6 @@
     "start": "electron dist/main.js"
   },
   "dependencies": {
-    "@temu-lister/shared": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^17.4.1",
     "express": "^4.21.0",
@@ -20,6 +19,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@temu-lister/shared": "workspace:*",
     "@types/cors": "^2.8.0",
     "@types/express": "^5.0.0",
     "@types/uuid": "^10.0.0",
@@ -27,5 +27,49 @@
     "electron": "^33.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.temu.lister",
+    "productName": "Temu Lister",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "../../release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web/dist"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/sharp/**/*",
+      "node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "compression": "normal",
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    }
   }
 }

@@ -201,6 +201,40 @@ mockupRouter.post('/test-connection', async (req, res) => {
 // === Directory-based mockup endpoints ===
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif']);
+const RESIZE_MODES = new Set(['fit', 'fill', 'stretch', 'none']);
+
+function normalizeResizeMode(value: unknown): 'fit' | 'fill' | 'stretch' | 'none' {
+  return typeof value === 'string' && RESIZE_MODES.has(value)
+    ? (value as 'fit' | 'fill' | 'stretch' | 'none')
+    : 'fill';
+}
+
+function scanPsdFiles(templateDir: string): { name: string; dir: string; path: string; size: number }[] {
+  const files: { name: string; dir: string; path: string; size: number }[] = [];
+  const entries = fs.readdirSync(templateDir);
+
+  for (const entry of entries) {
+    const fullPath = path.join(templateDir, entry);
+    const stat = fs.statSync(fullPath);
+
+    if (stat.isFile() && path.extname(entry).toLowerCase() === '.psd') {
+      files.push({ name: entry, dir: templateDir, path: fullPath, size: stat.size });
+      continue;
+    }
+
+    if (stat.isDirectory()) {
+      for (const sub of fs.readdirSync(fullPath)) {
+        const subPath = path.join(fullPath, sub);
+        const subStat = fs.statSync(subPath);
+        if (subStat.isFile() && path.extname(sub).toLowerCase() === '.psd') {
+          files.push({ name: sub, dir: fullPath, path: subPath, size: subStat.size });
+        }
+      }
+    }
+  }
+
+  return files;
+}
 
 // POST /api/mockup/scan-dir - Scan directory for image files
 mockupRouter.post('/scan-dir', (req, res) => {
@@ -234,14 +268,11 @@ mockupRouter.post('/scan-templates', (req, res) => {
     if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
       return res.json({ success: false, error: '目录不存在' });
     }
-    const entries = fs.readdirSync(dirPath);
-    const templates = entries
-      .filter((f: string) => path.extname(f).toLowerCase() === '.psd')
-      .map((f: string) => {
-        const fullPath = path.join(dirPath, f);
-        const stat = fs.statSync(fullPath);
-        return { path: fullPath, name: f, size: stat.size };
-      });
+    const templates = scanPsdFiles(dirPath).map(({ path: filePath, name, size }) => ({
+      path: filePath,
+      name,
+      size,
+    }));
     res.json({ success: true, data: { templates, count: templates.length } });
   } catch (err) {
     res.json({ success: false, error: String(err) });
@@ -272,39 +303,46 @@ mockupRouter.post('/detect-layers', async (req, res) => {
 // POST /api/mockup/batch-dir - Batch mockup from directory
 // Each image × each template → separate folder with per-scene exports (1.jpg, 2.jpg...)
 mockupRouter.post('/batch-dir', async (req, res) => {
-  const { config } = req.body;
-  const {
-    imageDir,
-    templateDir,
-    outputDir,
-    exportFormat = 'jpg',
-    jpgQuality = 10,
-  } = config;
+  try {
+    const { config } = req.body;
+    if (!config) {
+      return res.json({ success: false, error: '缺少 config 参数' });
+    }
+    const {
+      imageDir,
+      templateDir,
+      outputDir,
+      exportFormat = 'jpg',
+      jpgQuality = 10,
+    } = config;
+    const resizeMode = normalizeResizeMode(config.resizeMode);
 
-  // Validate
-  if (!imageDir || !templateDir || !outputDir) {
-    return res.json({ success: false, error: '缺少必要参数（图片目录、模板目录、输出目录）' });
-  }
+    // Validate
+    if (!imageDir || !templateDir || !outputDir) {
+      return res.json({ success: false, error: '缺少必要参数（图片目录、模板目录、输出目录）' });
+    }
 
-  // Scan images
-  const imgEntries = fs.readdirSync(imageDir);
-  const imageFiles = imgEntries.filter((f: string) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
-  if (imageFiles.length === 0) {
-    return res.json({ success: false, error: '图片目录中没有图片文件' });
-  }
+    console.log('[batch-dir] imageDir:', imageDir, 'templateDir:', templateDir, 'outputDir:', outputDir);
 
-  // Scan PSD templates
-  const tplEntries = fs.readdirSync(templateDir);
-  const psdFiles = tplEntries.filter((f: string) => path.extname(f).toLowerCase() === '.psd');
-  if (psdFiles.length === 0) {
-    return res.json({ success: false, error: '模板目录中没有 PSD 文件' });
-  }
+    // Scan images
+    const imgEntries = fs.readdirSync(imageDir);
+    const imageFiles = imgEntries.filter((f: string) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
+    if (imageFiles.length === 0) {
+      return res.json({ success: false, error: '图片目录中没有图片文件' });
+    }
 
-  // Ensure output dir exists
-  fs.mkdirSync(outputDir, { recursive: true });
+    const psdFiles = scanPsdFiles(templateDir);
+    if (psdFiles.length === 0) {
+      return res.json({ success: false, error: '模板目录中没有 PSD 文件' });
+    }
 
-  const totalJobs = imageFiles.length * psdFiles.length;
-  res.json({ success: true, data: { message: 'Batch mockup started', totalJobs } });
+    console.log('[batch-dir] Found', imageFiles.length, 'images,', psdFiles.length, 'PSD templates');
+
+    // Ensure output dir exists
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const totalJobs = imageFiles.length * psdFiles.length;
+    res.json({ success: true, data: { message: 'Batch mockup started', totalJobs } });
 
   // Background processing
   const psHost = getSetting('ps_host') || '127.0.0.1';
@@ -321,10 +359,10 @@ mockupRouter.post('/batch-dir', async (req, res) => {
       const imagePath = path.join(imageDir, imageFile);
       const imageName = path.basename(imageFile, path.extname(imageFile));
 
-      for (const psdFile of psdFiles) {
+      for (const psdEntry of psdFiles) {
         current++;
-        const psdPath = path.join(templateDir, psdFile);
-        const templateName = path.basename(psdFile, '.psd');
+        const psdPath = path.join(psdEntry.dir, psdEntry.name);
+        const templateName = path.basename(psdEntry.name, '.psd');
 
         // Output: outputDir / templateName / imageName / 1.jpg, 2.jpg...
         const sceneOutputDir = path.join(outputDir, templateName, imageName);
@@ -349,7 +387,8 @@ mockupRouter.post('/batch-dir', async (req, res) => {
             imagePath,
             sceneOutputDir,
             exportFormat,
-            jpgQuality
+            jpgQuality,
+            resizeMode
           );
 
           broadcastToWeb({
@@ -386,5 +425,11 @@ mockupRouter.post('/batch-dir', async (req, res) => {
     psClient.disconnect();
   } catch (err) {
     console.error('Batch dir mockup error:', err);
+  }
+  } catch (outerErr) {
+    console.error('[batch-dir] Handler error:', outerErr);
+    if (!res.headersSent) {
+      res.json({ success: false, error: String(outerErr) });
+    }
   }
 });

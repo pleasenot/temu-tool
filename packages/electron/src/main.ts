@@ -7,6 +7,10 @@ import { initDatabase } from './services/database';
 import { migrateLegacyPlaintextSecrets } from './services/secure-settings';
 import { isEncryptionAvailable } from './services/encryption';
 
+// Prevent EPIPE crashes when stdout/stderr pipe is broken (e.g. parent process exits)
+process.stdout?.on('error', () => {});
+process.stderr?.on('error', () => {});
+
 // Disable GPU to avoid crashes in environments without GPU support
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');

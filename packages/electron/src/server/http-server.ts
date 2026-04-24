@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import { app as electronApp } from 'electron';
 import { getUploadsDir } from '../services/storage';
 import { productsRouter } from './routes/products';
 import { mockupRouter } from './routes/mockup';
@@ -25,7 +26,9 @@ export function startHttpServer(port: number): void {
   app.use('/api/templates', templateRouter);
 
   // Serve React SPA static files
-  const webDistPath = path.resolve(__dirname, '../../../web/dist');
+  const webDistPath = electronApp.isPackaged
+    ? path.join(process.resourcesPath, 'web', 'dist')
+    : path.resolve(__dirname, '../../../web/dist');
   app.use(express.static(webDistPath));
 
   // SPA fallback - serve index.html for all non-API routes
